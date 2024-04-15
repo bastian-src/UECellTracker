@@ -1,0 +1,16 @@
+[package]
+name = "ue-cell-tracker"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = "1.0.80"
+ctrlc = "3.4.4"
+derive = "1.0.0"
+features = "0.10.0"
+reqwest = { version = "0.12.3", features = ["json"] }
+serde = { version = "1.0.197", features = ["derive"] }
+serde_libconfig = "0.0.1"
+tokio = { version = "1.37.0", features = ["full"] }
