@@ -100,6 +100,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     let args: Arguments = Arguments::build()?;
     println!("Arguments: {:?}", args);
 
-    // start_continuous_tracking()?;
+    start_continuous_tracking()?;
     Ok(())
 }
