@@ -1,14 +1,19 @@
 use anyhow::Result;
+use std::error::Error;
 use std::net::UdpSocket;
 use std::process::Child;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+
 use std::thread;
 use std::time::Duration;
 
+mod util;
+mod parse;
 mod cell_info;
 mod ngscope;
-mod util;
+
+use parse::Arguments;
 use cell_info::CellInfo;
 use ngscope::config::NgScopeConfig;
 use ngscope::types::Message;
@@ -23,6 +28,7 @@ fn init_dci_server(local_addr: &str, server_addr: &str) -> Result<UdpSocket> {
 
     Ok(socket)
 }
+// HERE: Fix build and pass arguments
 
 fn start_continuous_tracking() -> Result<()> {
     // Retrieve cell information
@@ -88,8 +94,12 @@ fn start_listen_for_ngscope_message() -> Result<()> {
     Ok(())
 }
 
-fn main() -> Result<()> {
+fn main() -> Result<(), Box<dyn Error>> {
     println!("Hello, world!");
 
-    start_continuous_tracking()
+    let args: Arguments = Arguments::build()?;
+    println!("Arguments: {:?}", args);
+
+    // start_continuous_tracking()?;
+    Ok(())
 }

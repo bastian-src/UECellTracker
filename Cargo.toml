@@ -7,10 +7,16 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.80"
+clap = { version = "4.5.4", features = ["derive", "color", "env", "help"] }
+clap-serde = "0.5.1"
+confy = { version = "0.6.1", default-features = false, features = ["yaml_conf"] }
 ctrlc = "3.4.4"
 derive = "1.0.0"
 features = "0.10.0"
 reqwest = { version = "0.12.3", features = ["json"] }
 serde = { version = "1.0.197", features = ["derive"] }
+serde_derive = "1.0.198"
 serde_libconfig = "0.0.1"
+serde_yaml = "0.9.34"
+strum_macros = "0.26.2"
 tokio = { version = "1.37.0", features = ["full"] }
