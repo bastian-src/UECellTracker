@@ -20,9 +20,9 @@ impl CellInfo {
     // Function to create CellInfo from data fetched from Milesight router
     #[allow(dead_code)]
     #[tokio::main]
-    pub async fn from_milesight_router(base_addr: &str) -> Result<Self> {
+    pub async fn from_milesight_router(url: &str) -> Result<Self> {
         // Simulate fetching HTML response from a URL
-        let resp = get(String::new() + base_addr + "/some/addr")
+        let resp = get(url)
             .await?
             .json::<HashMap<String, String>>()
             .await?;
