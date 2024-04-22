@@ -5,7 +5,7 @@ pub const NOF_VALIDATE_SUCCESS: usize = 2;
 
 // taken from: ngscope/src/dciLib/dci_sink_client.c
 pub const NGSCOPE_REMOTE_BUFFER_SIZE: usize = 1400; // ngscope sending buffer size
-                                                // taken from: ngscope/hdr/dciLib/dci_sink_def.h
+                                                    // taken from: ngscope/hdr/dciLib/dci_sink_def.h
 pub const NGSCOPE_MAX_NOF_CELL: usize = 4; // ngscope max nof cells per station
 pub const NGSCOPE_MAX_NOF_RNTI: usize = 20;
 
@@ -53,7 +53,9 @@ impl Message {
         let msg: Message = match MessageType::from_bytes(&msg_type_bytes).unwrap() {
             MessageType::Start => Message::Start,
             MessageType::Dci => Message::Dci(NgScopeUeDci::from_bytes(content_bytes.try_into()?)?),
-            MessageType::CellDci => Message::CellDci(NgScopeCellDci::from_bytes(content_bytes.try_into()?)?),
+            MessageType::CellDci => {
+                Message::CellDci(NgScopeCellDci::from_bytes(content_bytes.try_into()?)?)
+            }
             MessageType::Config => {
                 Message::Config(NgScopeCellConfig::from_bytes(content_bytes.try_into()?)?)
             }
@@ -175,7 +177,6 @@ pub fn ngscope_extract_packet(packet: &[u8]) -> Result<(MessageType, Vec<u8>)> {
         .context("Could not extrat message type form bytes.")?;
     Ok((msg_type, content.to_vec()))
 }
-
 
 #[cfg(test)]
 mod tests {

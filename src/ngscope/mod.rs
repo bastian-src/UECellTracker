@@ -1,9 +1,9 @@
 use anyhow::{anyhow, Result};
 
+use std::net::UdpSocket;
 use std::process::{Child, Command};
 use std::thread;
 use std::time::Duration;
-use std::net::UdpSocket;
 
 #[allow(dead_code)]
 pub mod config;
@@ -11,7 +11,7 @@ pub mod config;
 pub mod types;
 
 use config::NgScopeConfig;
-use types::{MessageType, Message};
+use types::{Message, MessageType};
 
 const TMP_NGSCOPE_CONFIG_PATH: &str = "./.tmp_ngscope_conf.cfg";
 
@@ -61,9 +61,10 @@ pub fn ngscope_validate_server(socket: &UdpSocket, server_addr: &str) -> Result<
         let msg_type = ngscope_recv_single_message_type(socket);
         match msg_type {
             Ok((msg_type, _)) => match msg_type {
-                MessageType::Start | MessageType::Dci | MessageType::CellDci | MessageType::Config => {
-                    nof_messages_to_validate -= 1
-                }
+                MessageType::Start
+                | MessageType::Dci
+                | MessageType::CellDci
+                | MessageType::Config => nof_messages_to_validate -= 1,
                 MessageType::Exit => break,
             },
             Err(err) => println!("failed evaluating message, retrying... `{}`", err),
@@ -75,4 +76,3 @@ pub fn ngscope_validate_server(socket: &UdpSocket, server_addr: &str) -> Result<
         types::NOF_VALIDATE_RETRIES
     ))
 }
-

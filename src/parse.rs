@@ -1,5 +1,5 @@
 /// Credits: https://stackoverflow.com/questions/55133351/is-there-a-way-to-get-clap-to-use-default-values-from-a-file
-use clap::{Args, Command, ValueEnum, CommandFactory, Parser};
+use clap::{Args, Command, CommandFactory, Parser, ValueEnum};
 use serde::{Deserialize, Serialize};
 use std::{default, error::Error, path::PathBuf};
 
@@ -8,7 +8,7 @@ use std::{default, error::Error, path::PathBuf};
 #[command(propagate_version = true)]
 pub struct Arguments {
     /// Define which API to use to fetch cell data
-    #[arg(value_enum, required=false)]
+    #[arg(short('a'), value_enum, required = false)]
     pub cellapi: Option<CellApiConfig>,
 
     /// Config for fetching data from Milesight router API
@@ -18,15 +18,14 @@ pub struct Arguments {
     /// Config for fetching data from DevicePublisher app API
     #[command(flatten)]
     pub devicepublisher: Option<DevicePublisherArgs>,
- 
+
     /// Path to the ng-scope executable
-    #[arg(required=false)]
+    #[arg(short, long, required = false)]
     pub ngscopepath: Option<String>,
     /// Print additional information in the terminal
     #[arg(short('v'), long, required = false)]
     pub verbose: Option<bool>,
 }
-
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug, Serialize, Deserialize)]
 pub enum CellApiConfig {
@@ -39,16 +38,23 @@ pub enum CellApiConfig {
 #[derive(Args, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MilesightArgs {
     /// URL to fetch data from
-    pub milesight_url: Option<String>,
-    /// Base64 encoded auth
+    #[arg(long, required = false)]
+    pub milesight_address: Option<String>,
+    /// username for login
+    #[arg(long, required = false)]
+    pub milesight_user: Option<String>,
+    /// authentication: Base64 encoded password
+    #[arg(long, required = false)]
     pub milesight_auth: Option<String>,
 }
 
 #[derive(Args, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DevicePublisherArgs {
     /// Base address of DevicePublisher
+    #[arg(long, required = false)]
     pub devpub_address: Option<String>,
     /// Some authentication
+    #[arg(long, required = false)]
     pub devpub_auth: Option<String>,
 }
 
@@ -57,8 +63,9 @@ impl default::Default for Arguments {
         Arguments {
             cellapi: Some(CellApiConfig::Milesight),
             milesight: Some(MilesightArgs {
-                milesight_url: Some("https://some.address.com/with/path".to_string()),
-                milesight_auth: Some("some_auth".to_string()),
+                milesight_address: Some("http://127.0.0.1".to_string()),
+                milesight_user: Some("root".to_string()),
+                milesight_auth: Some("root-password".to_string()),
             }),
             devicepublisher: Some(DevicePublisherArgs {
                 devpub_address: Some("https://some.address".to_string()),
@@ -118,4 +125,3 @@ impl Arguments {
         Ok(self)
     }
 }
-

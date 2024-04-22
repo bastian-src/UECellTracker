@@ -8,16 +8,17 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-mod util;
-mod parse;
 mod cell_info;
+mod helper;
 mod ngscope;
+mod parse;
+mod util;
 
-use parse::Arguments;
 use cell_info::CellInfo;
 use ngscope::config::NgScopeConfig;
 use ngscope::types::Message;
 use ngscope::{restart_ngscope, start_ngscope, stop_ngscope};
+use parse::{Arguments, MilesightArgs};
 
 const MILESIGHT_BASE_ADDR: &str = "https://some.addr";
 
@@ -30,7 +31,7 @@ fn init_dci_server(local_addr: &str, server_addr: &str) -> Result<UdpSocket> {
 }
 // HERE: Fix build and pass arguments
 
-fn start_continuous_tracking() -> Result<()> {
+fn start_continuous_tracking(args: Arguments) -> Result<()> {
     // Retrieve cell information
     // Write config
     // Start ng-scope process
@@ -41,21 +42,29 @@ fn start_continuous_tracking() -> Result<()> {
     //   -> implement hysterese: only restart if it has been running for a while.
 
     let sigint: Arc<AtomicBool> = util::prepare_sigint_notifier()?;
-    let mut cell_info: CellInfo = CellInfo::from_milesight_router(MILESIGHT_BASE_ADDR)?;
+    let milesight_args: MilesightArgs = args.milesight.unwrap();
+    let mut cell_info: CellInfo = CellInfo::from_milesight_router(
+        &milesight_args.clone().milesight_address.unwrap(),
+        &milesight_args.clone().milesight_user.unwrap(),
+        &milesight_args.clone().milesight_auth.unwrap(),
+    )?;
     let mut ngscope_process: Child;
     let mut ngscope_config = NgScopeConfig::default();
 
     ngscope_config.rnti = 0xFFFF;
-    ngscope_config.rf_config0.as_mut().unwrap().rf_freq = cell_info.down_frequency as u64;
+    ngscope_config.rf_config0.as_mut().unwrap().rf_freq = cell_info.frequency as u64;
     ngscope_process = start_ngscope(&ngscope_config)?;
 
     while !util::is_notifier(&sigint) {
-        let latest_cell_info = CellInfo::from_milesight_router(MILESIGHT_BASE_ADDR)?;
+        let latest_cell_info: CellInfo = CellInfo::from_milesight_router(
+            &milesight_args.clone().milesight_address.unwrap(),
+            &milesight_args.clone().milesight_user.unwrap(),
+            &milesight_args.clone().milesight_auth.unwrap(),
+        )?;
         if latest_cell_info.cell_id != cell_info.cell_id {
             // TODO: Determine the RNIT using RNTI matching
             ngscope_config.rnti = 0xFFFF;
-            ngscope_config.rf_config0.as_mut().unwrap().rf_freq =
-                latest_cell_info.down_frequency as u64;
+            ngscope_config.rf_config0.as_mut().unwrap().rf_freq = latest_cell_info.frequency as u64;
             ngscope_process = restart_ngscope(ngscope_process, &ngscope_config)?;
             cell_info = latest_cell_info.clone();
         }
@@ -110,9 +119,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("Hello, world!");
 
     let args: Arguments = Arguments::build()?;
-    println!("Arguments: {:?}", args);
+    println!("{:#?}", args);
 
-    // start_continuous_tracking(args)?;
-    let _ = start_listen_for_ngscope_message();
+    start_continuous_tracking(args)?;
+    // let _ = start_listen_for_ngscope_message();
     Ok(())
 }
