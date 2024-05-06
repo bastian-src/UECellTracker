@@ -61,7 +61,7 @@ pub fn ngscope_validate_server(socket: &UdpSocket, server_addr: &str) -> Result<
         let msg_type = ngscope_recv_single_message_type(socket);
         match msg_type {
             Ok((msg_type, _)) => match msg_type {
-                MessageType::Start | MessageType::Dci | MessageType::Config => {
+                MessageType::Start | MessageType::Dci | MessageType::CellDci | MessageType::Config => {
                     nof_messages_to_validate -= 1
                 }
                 MessageType::Exit => break,

@@ -79,6 +79,14 @@ fn start_listen_for_ngscope_message() -> Result<()> {
         if let Ok(msg) = ngscope::ngscope_recv_single_message(&socket) {
             match msg {
                 Message::Start => {}
+                Message::CellDci(cell_dci) => {
+                    println!("<THESIS> {:?} | {:03?} | {:03?} | {:08?} | {:08?}",
+                          cell_dci.nof_rnti,
+                          cell_dci.total_dl_prb,
+                          cell_dci.total_ul_prb,
+                          cell_dci.total_dl_tbs,
+                          cell_dci.total_ul_tbs);
+                }
                 Message::Dci(ue_dci) => {
                     println!("{:?}", ue_dci)
                 }
@@ -89,6 +97,8 @@ fn start_listen_for_ngscope_message() -> Result<()> {
                     break;
                 }
             }
+        } else {
+            println!("could not receive message..")
         }
     }
     Ok(())
@@ -100,6 +110,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let args: Arguments = Arguments::build()?;
     println!("Arguments: {:?}", args);
 
-    start_continuous_tracking()?;
+    // start_continuous_tracking(args)?;
+    let _ = start_listen_for_ngscope_message();
     Ok(())
 }

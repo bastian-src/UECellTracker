@@ -7,11 +7,13 @@ pub const NOF_VALIDATE_SUCCESS: usize = 2;
 pub const NGSCOPE_REMOTE_BUFFER_SIZE: usize = 1400; // ngscope sending buffer size
                                                 // taken from: ngscope/hdr/dciLib/dci_sink_def.h
 pub const NGSCOPE_MAX_NOF_CELL: usize = 4; // ngscope max nof cells per station
+pub const NGSCOPE_MAX_NOF_RNTI: usize = 10;
 
 pub const NGSCOPE_MESSAGE_TYPE_SIZE: usize = 4;
 pub const NGSCOPE_MESSAGE_VERSION_POSITION: usize = 4;
 pub const NGSCOPE_MESSAGE_CONTENT_POSITION: usize = 5;
 pub const NGSCOPE_STRUCT_SIZE_DCI: usize = 40;
+pub const NGSCOPE_STRUCT_SIZE_CELL_DCI: usize = 248; // TODO: Determine this actually
 pub const NGSCOPE_STRUCT_SIZE_CONFIG: usize = 12; // TODO: Determine this actually
 
 // IMPORTANT:
@@ -22,6 +24,7 @@ pub const NGSCOPE_STRUCT_SIZE_CONFIG: usize = 12; // TODO: Determine this actual
 pub enum MessageType {
     Start,
     Dci,
+    CellDci,
     Config,
     Exit,
 }
@@ -30,6 +33,7 @@ pub enum MessageType {
 pub enum Message {
     Start,
     Dci(NgScopeUeDci),
+    CellDci(NgScopeCellDci),
     Config(NgScopeCellConfig),
     Exit,
 }
@@ -46,10 +50,10 @@ impl Message {
             bytes[..NGSCOPE_MESSAGE_TYPE_SIZE].try_into().unwrap();
         let _version_byte: u8 = bytes[NGSCOPE_MESSAGE_VERSION_POSITION];
         let content_bytes: &[u8] = &bytes[NGSCOPE_MESSAGE_CONTENT_POSITION..];
-
         let msg: Message = match MessageType::from_bytes(&msg_type_bytes).unwrap() {
             MessageType::Start => Message::Start,
             MessageType::Dci => Message::Dci(NgScopeUeDci::from_bytes(content_bytes.try_into()?)?),
+            MessageType::CellDci => Message::CellDci(NgScopeCellDci::from_bytes(content_bytes.try_into()?)?),
             MessageType::Config => {
                 Message::Config(NgScopeCellConfig::from_bytes(content_bytes.try_into()?)?)
             }
@@ -64,6 +68,7 @@ impl MessageType {
         match *bytes {
             [0xCC, 0xCC, 0xCC, 0xCC] => Some(MessageType::Start),
             [0xAA, 0xAA, 0xAA, 0xAA] => Some(MessageType::Dci),
+            [0xAB, 0xAB, 0xAB, 0xAB] => Some(MessageType::CellDci),
             [0xBB, 0xBB, 0xBB, 0xBB] => Some(MessageType::Config),
             [0xFF, 0xFF, 0xFF, 0xFF] => Some(MessageType::Exit),
             _ => None,
@@ -73,6 +78,7 @@ impl MessageType {
         match self {
             MessageType::Start => [0xCC; NGSCOPE_MESSAGE_TYPE_SIZE],
             MessageType::Dci => [0xAA; NGSCOPE_MESSAGE_TYPE_SIZE],
+            MessageType::CellDci => [0xAB; NGSCOPE_MESSAGE_TYPE_SIZE],
             MessageType::Config => [0xBB; NGSCOPE_MESSAGE_TYPE_SIZE],
             MessageType::Exit => [0xFF; NGSCOPE_MESSAGE_TYPE_SIZE],
         }
@@ -101,6 +107,39 @@ impl NgScopeUeDci {
     pub fn from_bytes(bytes: [u8; NGSCOPE_STRUCT_SIZE_DCI]) -> Result<NgScopeUeDci> {
         let ue_dci: &NgScopeUeDci = unsafe { &*bytes.as_ptr().cast() };
         Ok(ue_dci.clone())
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Debug)]
+pub struct NgScopeRntiDci {
+    pub rnti: u16,
+	pub dl_tbs: u32,
+	pub dl_prb: u8,
+
+	pub ul_tbs: u32,
+	pub ul_prb: u8,
+}
+
+#[repr(C)]
+#[derive(Clone, Debug)]
+pub struct NgScopeCellDci {
+	pub cell_id: u8,
+	pub time_stamp: u64,
+	pub tti: u16,
+	pub total_dl_tbs: u64,
+	pub total_ul_tbs: u64,
+	pub total_dl_prb: u8,
+	pub total_ul_prb: u8,
+	// TODO: Evaluate MAX_NOF_RNTI
+	pub nof_rnti: u8,
+    pub rnti_list: [NgScopeRntiDci; NGSCOPE_MAX_NOF_RNTI],
+}
+
+impl NgScopeCellDci {
+    pub fn from_bytes(bytes: [u8; NGSCOPE_STRUCT_SIZE_CELL_DCI]) -> Result<NgScopeCellDci> {
+        let cell_dci: &NgScopeCellDci = unsafe { &*bytes.as_ptr().cast() };
+        Ok(cell_dci.clone())
     }
 }
 
