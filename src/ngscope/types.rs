@@ -7,13 +7,13 @@ pub const NOF_VALIDATE_SUCCESS: usize = 2;
 pub const NGSCOPE_REMOTE_BUFFER_SIZE: usize = 1400; // ngscope sending buffer size
                                                 // taken from: ngscope/hdr/dciLib/dci_sink_def.h
 pub const NGSCOPE_MAX_NOF_CELL: usize = 4; // ngscope max nof cells per station
-pub const NGSCOPE_MAX_NOF_RNTI: usize = 10;
+pub const NGSCOPE_MAX_NOF_RNTI: usize = 20;
 
 pub const NGSCOPE_MESSAGE_TYPE_SIZE: usize = 4;
 pub const NGSCOPE_MESSAGE_VERSION_POSITION: usize = 4;
 pub const NGSCOPE_MESSAGE_CONTENT_POSITION: usize = 5;
 pub const NGSCOPE_STRUCT_SIZE_DCI: usize = 40;
-pub const NGSCOPE_STRUCT_SIZE_CELL_DCI: usize = 248; // TODO: Determine this actually
+pub const NGSCOPE_STRUCT_SIZE_CELL_DCI: usize = 448;
 pub const NGSCOPE_STRUCT_SIZE_CONFIG: usize = 12; // TODO: Determine this actually
 
 // IMPORTANT:
@@ -116,9 +116,11 @@ pub struct NgScopeRntiDci {
     pub rnti: u16,
 	pub dl_tbs: u32,
 	pub dl_prb: u8,
+	pub dl_reTx: u8,
 
 	pub ul_tbs: u32,
 	pub ul_prb: u8,
+	pub ul_reTx: u8,
 }
 
 #[repr(C)]
@@ -131,7 +133,8 @@ pub struct NgScopeCellDci {
 	pub total_ul_tbs: u64,
 	pub total_dl_prb: u8,
 	pub total_ul_prb: u8,
-	// TODO: Evaluate MAX_NOF_RNTI
+	pub total_dl_reTx: u8,
+	pub total_ul_reTx: u8,
 	pub nof_rnti: u8,
     pub rnti_list: [NgScopeRntiDci; NGSCOPE_MAX_NOF_RNTI],
 }
