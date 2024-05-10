@@ -80,12 +80,14 @@ fn start_listen_for_ngscope_message() -> Result<()> {
             match msg {
                 Message::Start => {}
                 Message::CellDci(cell_dci) => {
-                    println!("<THESIS> {:?} | {:03?} | {:03?} | {:08?} | {:08?}",
+                    println!("<THESIS> {:?} | {:03?} | {:03?} | {:08?} | {:08?} | {:03?} | {:03?}",
                           cell_dci.nof_rnti,
                           cell_dci.total_dl_prb,
                           cell_dci.total_ul_prb,
                           cell_dci.total_dl_tbs,
-                          cell_dci.total_ul_tbs);
+                          cell_dci.total_ul_tbs,
+                          cell_dci.total_dl_reTx,
+                          cell_dci.total_ul_reTx);
                 }
                 Message::Dci(ue_dci) => {
                     println!("{:?}", ue_dci)
