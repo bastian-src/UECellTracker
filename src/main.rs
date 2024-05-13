@@ -18,7 +18,7 @@ use cell_info::CellInfo;
 use ngscope::config::NgScopeConfig;
 use ngscope::types::Message;
 use ngscope::{restart_ngscope, start_ngscope, stop_ngscope};
-use parse::{Arguments, MilesightArgs};
+use parse::{Arguments, MilesightArgs, DevicePublisherArgs};
 
 #[allow(dead_code)]
 fn init_dci_server(local_addr: &str, server_addr: &str) -> Result<UdpSocket> {
@@ -27,7 +27,6 @@ fn init_dci_server(local_addr: &str, server_addr: &str) -> Result<UdpSocket> {
 
     Ok(socket)
 }
-// HERE: Fix build and pass arguments
 
 fn start_continuous_tracking(args: Arguments) -> Result<()> {
     // Retrieve cell information
@@ -115,9 +114,7 @@ fn start_listen_for_ngscope_message() -> Result<()> {
 
 fn main() -> Result<(), Box<dyn Error>> {
     println!("Hello, world!");
-
     let args: Arguments = Arguments::build()?;
-    println!("{:#?}", args);
 
     start_continuous_tracking(args)?;
     // let _ = start_listen_for_ngscope_message();
