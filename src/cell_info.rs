@@ -4,7 +4,7 @@ use regex::Regex;
 use reqwest::header::{HeaderMap, HeaderName};
 use serde_derive::Deserialize;
 
-use crate::helper::helper_json_pointer;
+use crate::util::helper_json_pointer;
 
 // TODO: CellInfo should be able to hold several cell
 // Define the struct to hold cell information
@@ -51,7 +51,6 @@ pub struct CellData {
     pub estimatedDownBandwidth: Option<f64>,
     pub estimatedUpBandwidth: Option<f64>,
 }
-
 
 pub fn arfcn_to_frequency(arfcn: u64, cell_type: &CellularType) -> Result<u64> {
     match *cell_type {
@@ -457,39 +456,72 @@ mod tests {
     #[test]
     fn test_arfcn_to_frequency_lte() -> Result<()> {
         let af_map_lte = [
-            (2750, 2620000000),  // Band 7
-            (1710, 1856000000),  // Band 3
-            (4400, 2135000000),  // Band 10
-            (5300, 760000000),   // Band 5
-            (6000, 875000000),   // Band 19
-            (6300, 806000000),   // Band 20
-            (300, 2140000000),   // Band 1
+            (2750, 2620000000), // Band 7
+            (1710, 1856000000), // Band 3
+            (4400, 2135000000), // Band 10
+            (5300, 760000000),  // Band 5
+            (6000, 875000000),  // Band 19
+            (6300, 806000000),  // Band 20
+            (300, 2140000000),  // Band 1
         ];
         let cell_type = CellularType::LTE;
-        assert_eq!(arfcn_to_frequency(af_map_lte[0].0, &cell_type)?, af_map_lte[0].1);
-        assert_eq!(arfcn_to_frequency(af_map_lte[1].0, &cell_type)?, af_map_lte[1].1);
-        assert_eq!(arfcn_to_frequency(af_map_lte[2].0, &cell_type)?, af_map_lte[2].1);
-        assert_eq!(arfcn_to_frequency(af_map_lte[3].0, &cell_type)?, af_map_lte[3].1);
-        assert_eq!(arfcn_to_frequency(af_map_lte[4].0, &cell_type)?, af_map_lte[4].1);
-        assert_eq!(arfcn_to_frequency(af_map_lte[5].0, &cell_type)?, af_map_lte[5].1);
-        assert_eq!(arfcn_to_frequency(af_map_lte[6].0, &cell_type)?, af_map_lte[6].1);
+        assert_eq!(
+            arfcn_to_frequency(af_map_lte[0].0, &cell_type)?,
+            af_map_lte[0].1
+        );
+        assert_eq!(
+            arfcn_to_frequency(af_map_lte[1].0, &cell_type)?,
+            af_map_lte[1].1
+        );
+        assert_eq!(
+            arfcn_to_frequency(af_map_lte[2].0, &cell_type)?,
+            af_map_lte[2].1
+        );
+        assert_eq!(
+            arfcn_to_frequency(af_map_lte[3].0, &cell_type)?,
+            af_map_lte[3].1
+        );
+        assert_eq!(
+            arfcn_to_frequency(af_map_lte[4].0, &cell_type)?,
+            af_map_lte[4].1
+        );
+        assert_eq!(
+            arfcn_to_frequency(af_map_lte[5].0, &cell_type)?,
+            af_map_lte[5].1
+        );
+        assert_eq!(
+            arfcn_to_frequency(af_map_lte[6].0, &cell_type)?,
+            af_map_lte[6].1
+        );
         Ok(())
     }
 
     #[test]
     fn test_arfcn_to_frequency_nr() -> Result<()> {
         let af_map_nr = [
-            (151600, 758000000), // Band n28
-            (361000, 1805000000), // Band n3
-            (422000, 2110000000), // Band n1
-            (620000, 3300000000), // Band n78
+            (151600, 758000000),    // Band n28
+            (361000, 1805000000),   // Band n3
+            (422000, 2110000000),   // Band n1
+            (620000, 3300000000),   // Band n78
             (2016667, 24250080000), // Band n258
         ];
         let cell_type = CellularType::NR;
-        assert_eq!(arfcn_to_frequency(af_map_nr[0].0, &cell_type)?, af_map_nr[0].1);
-        assert_eq!(arfcn_to_frequency(af_map_nr[1].0, &cell_type)?, af_map_nr[1].1);
-        assert_eq!(arfcn_to_frequency(af_map_nr[2].0, &cell_type)?, af_map_nr[2].1);
-        assert_eq!(arfcn_to_frequency(af_map_nr[3].0, &cell_type)?, af_map_nr[3].1);
+        assert_eq!(
+            arfcn_to_frequency(af_map_nr[0].0, &cell_type)?,
+            af_map_nr[0].1
+        );
+        assert_eq!(
+            arfcn_to_frequency(af_map_nr[1].0, &cell_type)?,
+            af_map_nr[1].1
+        );
+        assert_eq!(
+            arfcn_to_frequency(af_map_nr[2].0, &cell_type)?,
+            af_map_nr[2].1
+        );
+        assert_eq!(
+            arfcn_to_frequency(af_map_nr[3].0, &cell_type)?,
+            af_map_nr[3].1
+        );
         Ok(())
     }
 
