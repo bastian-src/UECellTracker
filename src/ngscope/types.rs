@@ -53,9 +53,9 @@ impl Message {
         let msg: Message = match MessageType::from_bytes(&msg_type_bytes).unwrap() {
             MessageType::Start => Message::Start,
             MessageType::Dci => Message::Dci(NgScopeUeDci::from_bytes(content_bytes.try_into()?)?),
-            MessageType::CellDci => {
-                Message::CellDci(Box::new(NgScopeCellDci::from_bytes(content_bytes.try_into()?)?))
-            }
+            MessageType::CellDci => Message::CellDci(Box::new(NgScopeCellDci::from_bytes(
+                content_bytes.try_into()?,
+            )?)),
             MessageType::Config => {
                 Message::Config(NgScopeCellConfig::from_bytes(content_bytes.try_into()?)?)
             }
@@ -117,29 +117,29 @@ impl NgScopeUeDci {
 #[allow(non_snake_case)]
 pub struct NgScopeRntiDci {
     pub rnti: u16,
-	pub dl_tbs: u32,
-	pub dl_prb: u8,
-	pub dl_reTx: u8,
+    pub dl_tbs: u32,
+    pub dl_prb: u8,
+    pub dl_reTx: u8,
 
-	pub ul_tbs: u32,
-	pub ul_prb: u8,
-	pub ul_reTx: u8,
+    pub ul_tbs: u32,
+    pub ul_prb: u8,
+    pub ul_reTx: u8,
 }
 
 #[repr(C)]
 #[derive(Clone, Debug)]
 #[allow(non_snake_case)]
 pub struct NgScopeCellDci {
-	pub cell_id: u8,
-	pub time_stamp: u64,
-	pub tti: u16,
-	pub total_dl_tbs: u64,
-	pub total_ul_tbs: u64,
-	pub total_dl_prb: u8,
-	pub total_ul_prb: u8,
-	pub total_dl_reTx: u8,
-	pub total_ul_reTx: u8,
-	pub nof_rnti: u8,
+    pub cell_id: u8,
+    pub time_stamp: u64,
+    pub tti: u16,
+    pub total_dl_tbs: u64,
+    pub total_ul_tbs: u64,
+    pub total_dl_prb: u8,
+    pub total_ul_prb: u8,
+    pub total_dl_reTx: u8,
+    pub total_ul_reTx: u8,
+    pub nof_rnti: u8,
     pub rnti_list: [NgScopeRntiDci; NGSCOPE_MAX_NOF_RNTI],
 }
 

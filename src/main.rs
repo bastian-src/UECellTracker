@@ -1,120 +1,183 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
+use bus::Bus;
+use std::collections::HashSet;
 use std::error::Error;
-use std::net::UdpSocket;
-use std::process::Child;
 use std::sync::atomic::AtomicBool;
+use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 use std::sync::Arc;
-
-use std::thread;
-use std::time::Duration;
+use std::thread::JoinHandle;
 
 mod cell_info;
-mod helper;
+mod logic;
 mod ngscope;
 mod parse;
 mod util;
 
-use cell_info::CellInfo;
-use ngscope::config::NgScopeConfig;
-use ngscope::types::Message;
-use ngscope::{restart_ngscope, start_ngscope, stop_ngscope};
-use parse::{Arguments, MilesightArgs};
+use logic::cell_sink::{deploy_cell_sink, CellSinkArgs};
+use logic::cell_source::{deploy_cell_source, CellSourceArgs};
+use logic::ngscope_controller::{deploy_ngscope_controller, NgControlArgs};
+use logic::rnti_matcher::{deploy_rnti_matcher, RntiMatcherArgs};
+use logic::{WorkerState, WorkerType, NUM_OF_WORKERS, MessageCellInfo, MessageDci, MessageRnti};
+use parse::Arguments;
+use util::{is_notifier, prepare_sigint_notifier};
 
-#[allow(dead_code)]
-fn init_dci_server(local_addr: &str, server_addr: &str) -> Result<UdpSocket> {
-    let socket = UdpSocket::bind(local_addr).unwrap();
-    ngscope::ngscope_validate_server(&socket, server_addr).expect("server validation error");
+fn deploy_app(
+    tx_app_state: &mut Bus<WorkerState>,
+    tx_sink_state: Sender<WorkerState>,
+    tx_source_state: Sender<WorkerState>,
+    tx_ngcontrol_state: Sender<WorkerState>,
+    tx_rntimatcher_state: Sender<WorkerState>,
+) -> Result<Vec<JoinHandle<()>>> {
+    let mut tx_dci: Bus<MessageDci> = Bus::<MessageDci>::new(10); // TODO: Evaluate bus size, put into constant
+    let mut tx_cell_info: Bus<MessageCellInfo> = Bus::<MessageCellInfo>::new(10); // TODO: Evaluate bus size, put into constant
+    let mut tx_rnti: Bus<MessageRnti> = Bus::<MessageRnti>::new(10); // TODO: Evaluate bus size, put into constant
 
-    Ok(socket)
+    let sink_args = CellSinkArgs {
+        rx_app_state: tx_app_state.add_rx(),
+        tx_sink_state,
+        rx_cell_info: tx_cell_info.add_rx(),
+        rx_dci: tx_dci.add_rx(),
+        rx_rnti: tx_rnti.add_rx(),
+    };
+    let rntimatcher_args = RntiMatcherArgs {
+        rx_app_state: tx_app_state.add_rx(),
+        tx_rntimatcher_state,
+        rx_dci: tx_dci.add_rx(),
+        tx_rnti,
+    };
+    let ngcontrol_args = NgControlArgs {
+        rx_app_state: tx_app_state.add_rx(),
+        tx_ngcontrol_state,
+        rx_cell_info: tx_cell_info.add_rx(),
+        tx_dci,
+    };
+    let source_args = CellSourceArgs {
+        rx_app_state: tx_app_state.add_rx(),
+        tx_source_state,
+        tx_cell_info,
+    };
+
+    let tasks: Vec<JoinHandle<()>> = vec![
+        deploy_ngscope_controller(ngcontrol_args)?,
+        deploy_cell_source(source_args)?,
+        deploy_cell_sink(sink_args)?,
+        deploy_rnti_matcher(rntimatcher_args)?,
+    ];
+    Ok(tasks)
 }
 
-fn start_continuous_tracking(args: Arguments) -> Result<()> {
-    // Retrieve cell information
-    // Write config
-    // Start ng-scope process
-    // loop:
-    //   Retrieve cell (did it change?)
-    //   Update config
-    //   Restart ng-scope process
-    //   -> implement hysterese: only restart if it has been running for a while.
+fn wait_all_running(
+    sigint_notifier: &Arc<AtomicBool>,
+    rx_states: [&Receiver<WorkerState>; NUM_OF_WORKERS],
+) -> Result<()> {
+    println!("[ ] waiting for all threads to become ready");
 
-    let sigint: Arc<AtomicBool> = util::prepare_sigint_notifier()?;
-    let milesight_args: MilesightArgs = args.milesight.unwrap();
-    let mut cell_info: CellInfo = CellInfo::from_milesight_router(
-        &milesight_args.clone().milesight_address.unwrap(),
-        &milesight_args.clone().milesight_user.unwrap(),
-        &milesight_args.clone().milesight_auth.unwrap(),
-    )?;
-    let mut ngscope_process: Child;
-    let mut ngscope_config = NgScopeConfig { rnti: 0xFFFF, ..Default::default() };
-    ngscope_config.rf_config0.as_mut().unwrap().rf_freq = cell_info.frequency;
-    ngscope_process = start_ngscope(&ngscope_config)?;
+    let mut waiting_for: HashSet<WorkerType> = vec![
+        WorkerType::CellSource,
+        WorkerType::CellSink,
+        WorkerType::NgScopeController,
+        WorkerType::RntiMatcher,
+    ]
+    .into_iter()
+    .collect();
 
-    while !util::is_notifier(&sigint) {
-        let latest_cell_info: CellInfo = CellInfo::from_milesight_router(
-            &milesight_args.clone().milesight_address.unwrap(),
-            &milesight_args.clone().milesight_user.unwrap(),
-            &milesight_args.clone().milesight_auth.unwrap(),
-        )?;
-        if latest_cell_info.cell_id != cell_info.cell_id {
-            // TODO: Determine the RNIT using RNTI matching
-            ngscope_config.rnti = 0xFFFF;
-            ngscope_config.rf_config0.as_mut().unwrap().rf_freq = latest_cell_info.frequency;
-            ngscope_process = restart_ngscope(ngscope_process, &ngscope_config)?;
-            cell_info = latest_cell_info.clone();
+    while !waiting_for.is_empty() {
+        if is_notifier(sigint_notifier) {
+            return Err(anyhow!(
+                "SIGINT while waiting for all workers to be running"
+            ));
         }
-        thread::sleep(Duration::from_secs(10));
-    }
-    stop_ngscope(ngscope_process)?;
-    Ok(())
-}
-
-#[allow(dead_code)]
-fn start_listen_for_ngscope_message() -> Result<()> {
-    let local_addr = "0.0.0.0:8888";
-    let server_addr = "0.0.0.0:6767";
-
-    let socket = init_dci_server(local_addr, server_addr)?;
-
-    println!("Successfully initialized Dci server");
-    println!("Analyzing incoming messages..");
-
-    loop {
-        if let Ok(msg) = ngscope::ngscope_recv_single_message(&socket) {
-            match msg {
-                Message::Start => {}
-                Message::CellDci(cell_dci) => {
-                    println!("<THESIS> {:?} | {:03?} | {:03?} | {:08?} | {:08?} | {:03?} | {:03?}",
-                          cell_dci.nof_rnti,
-                          cell_dci.total_dl_prb,
-                          cell_dci.total_ul_prb,
-                          cell_dci.total_dl_tbs,
-                          cell_dci.total_ul_tbs,
-                          cell_dci.total_dl_reTx,
-                          cell_dci.total_ul_reTx);
-                }
-                Message::Dci(ue_dci) => {
-                    println!("{:?}", ue_dci)
-                }
-                Message::Config(cell_config) => {
-                    println!("{:?}", cell_config)
-                }
-                Message::Exit => {
-                    break;
+        for rx_state in rx_states.iter() {
+            match rx_state.try_recv() {
+                Ok(msg) => match msg {
+                    WorkerState::Running(worker) => {
+                        println!(" ✓ {:?} running", worker);
+                        waiting_for.remove(&worker);
+                    }
+                    WorkerState::Stopped(worker) => {
+                        println!(" ✗ {:?} stopped", worker);
+                        waiting_for.remove(&worker);
+                    }
+                    WorkerState::Specific(worker, state) => {
+                        return Err(anyhow!(
+                            "Waiting for all workers to be running, but {:?} sent: {:?}",
+                            worker,
+                            state
+                        ))
+                    }
+                },
+                Err(TryRecvError::Empty) => {}
+                Err(TryRecvError::Disconnected) => {
+                    return Err(anyhow!(
+                        "Waiting for all workers to be running, \
+                        but a channel disconnected. Left workers: {:?}",
+                        waiting_for
+                    ));
                 }
             }
-        } else {
-            println!("could not receive message..")
         }
     }
+
+    println!("[✓] waiting for all threads to become ready");
     Ok(())
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
     println!("Hello, world!");
-    let args: Arguments = Arguments::build()?;
+    let _args: Arguments = Arguments::build()?;
 
-    start_continuous_tracking(args)?;
-    // let _ = start_listen_for_ngscope_message();
+    let sigint_notifier = prepare_sigint_notifier()?;
+
+    let mut tx_app_state = Bus::<WorkerState>::new(10); // TODO: Evaluate bus size, put into
+                                                        // constant
+    let (tx_sink_state, rx_sink_state) = channel::<WorkerState>();
+    let (tx_source_state, rx_source_state) = channel::<WorkerState>();
+    let (tx_ngcontrol_state, rx_ngcontrol_state) = channel::<WorkerState>();
+    let (tx_rntimatcher_state, rx_rntimatcher_state) = channel::<WorkerState>();
+    let all_rx_states = [
+        &rx_source_state,
+        &rx_sink_state,
+        &rx_ngcontrol_state,
+        &rx_rntimatcher_state,
+    ];
+    let tasks = deploy_app(
+        &mut tx_app_state,
+        tx_sink_state,
+        tx_source_state,
+        tx_ngcontrol_state,
+        tx_rntimatcher_state,
+    )?;
+
+    wait_all_running(&sigint_notifier, all_rx_states)?;
+
+    tx_app_state.broadcast(WorkerState::Running(WorkerType::Main));
+
+    while !is_notifier(&sigint_notifier) {
+        match rx_sink_state.try_recv() {
+            Ok(resp) => println!("[main] sink_state: {:?}", resp),
+            Err(TryRecvError::Empty) => { /* No message received, continue the loop */ }
+            Err(TryRecvError::Disconnected) => {} // Handle disconnection if necessary
+        }
+        match rx_source_state.try_recv() {
+            Ok(resp) => println!("[main] source_state: {:?}", resp),
+            Err(TryRecvError::Empty) => { /* No message received, continue the loop */ }
+            Err(TryRecvError::Disconnected) => {} // Handle disconnection if necessary
+        }
+        match rx_ngcontrol_state.try_recv() {
+            Ok(resp) => println!("[main] ngcontrol_state: {:?}", resp),
+            Err(TryRecvError::Empty) => { /* No message received, continue the loop */ }
+            Err(TryRecvError::Disconnected) => {} // Handle disconnection if necessary
+        }
+        match rx_rntimatcher_state.try_recv() {
+            Ok(resp) => println!("[main] rntimatcher_state: {:?}", resp),
+            Err(TryRecvError::Empty) => { /* No message received, continue the loop */ }
+            Err(TryRecvError::Disconnected) => {} // Handle disconnection if necessary
+        }
+    }
+    tx_app_state.broadcast(WorkerState::Stopped(WorkerType::Main));
+
+    for task in tasks {
+        let _ = task.join();
+    }
     Ok(())
 }
