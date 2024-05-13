@@ -33,13 +33,13 @@ pub enum MessageType {
 pub enum Message {
     Start,
     Dci(NgScopeUeDci),
-    CellDci(NgScopeCellDci),
+    CellDci(Box<NgScopeCellDci>),
     Config(NgScopeCellConfig),
     Exit,
 }
 
 impl Message {
-    pub fn from_bytes(bytes: &Vec<u8>) -> Result<Message> {
+    pub fn from_bytes(bytes: &[u8]) -> Result<Message> {
         if bytes.len() < NGSCOPE_MESSAGE_TYPE_SIZE {
             return Err(anyhow!(
                 "bytes must be at least {}",
@@ -54,7 +54,7 @@ impl Message {
             MessageType::Start => Message::Start,
             MessageType::Dci => Message::Dci(NgScopeUeDci::from_bytes(content_bytes.try_into()?)?),
             MessageType::CellDci => {
-                Message::CellDci(NgScopeCellDci::from_bytes(content_bytes.try_into()?)?)
+                Message::CellDci(Box::new(NgScopeCellDci::from_bytes(content_bytes.try_into()?)?))
             }
             MessageType::Config => {
                 Message::Config(NgScopeCellConfig::from_bytes(content_bytes.try_into()?)?)
@@ -114,6 +114,7 @@ impl NgScopeUeDci {
 
 #[repr(C)]
 #[derive(Clone, Debug)]
+#[allow(non_snake_case)]
 pub struct NgScopeRntiDci {
     pub rnti: u16,
 	pub dl_tbs: u32,
@@ -127,6 +128,7 @@ pub struct NgScopeRntiDci {
 
 #[repr(C)]
 #[derive(Clone, Debug)]
+#[allow(non_snake_case)]
 pub struct NgScopeCellDci {
 	pub cell_id: u8,
 	pub time_stamp: u64,

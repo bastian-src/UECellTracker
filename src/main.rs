@@ -20,8 +20,6 @@ use ngscope::types::Message;
 use ngscope::{restart_ngscope, start_ngscope, stop_ngscope};
 use parse::{Arguments, MilesightArgs};
 
-const MILESIGHT_BASE_ADDR: &str = "https://some.addr";
-
 #[allow(dead_code)]
 fn init_dci_server(local_addr: &str, server_addr: &str) -> Result<UdpSocket> {
     let socket = UdpSocket::bind(local_addr).unwrap();
