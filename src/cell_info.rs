@@ -1,9 +1,8 @@
 use anyhow::{anyhow, Result};
 
 use regex::Regex;
-use reqwest::get;
 use reqwest::header::{HeaderMap, HeaderName};
-use std::collections::HashMap;
+use serde_derive::Deserialize;
 
 use crate::helper::helper_json_pointer;
 
@@ -31,7 +30,7 @@ impl CellularType {
 pub struct CellInfo {
     pub cell_id: u64,
     pub cell_type: CellularType,
-    pub frequency: u32,
+    pub frequency: u64,
     pub rssi: f64,
     pub rsrp: f64,
     pub rsrq: f64,
@@ -39,12 +38,142 @@ pub struct CellInfo {
     pub ul_est: Option<f64>,
 }
 
-pub fn arfcn_to_frequency(_arfcn: u32, _cell_type: &CellularType) -> Result<u32> {
-    Ok(123_u32)
+#[derive(Debug, Clone, Deserialize)]
+#[allow(non_snake_case)]
+pub struct CellData {
+    pub id: u64,
+    pub r#type: String,
+    pub arfcn: u64,
+    pub band: String,
+    pub rssi: f64,
+    pub rsrp: f64,
+    pub rsrq: f64,
+    pub estimatedDownBandwidth: Option<f64>,
+    pub estimatedUpBandwidth: Option<f64>,
+}
+
+
+pub fn arfcn_to_frequency(arfcn: u64, cell_type: &CellularType) -> Result<u64> {
+    match *cell_type {
+        CellularType::LTE => {
+            if (0..=599).contains(&arfcn) {
+                // Band 1
+                Ok(2110000000 + 100000 * arfcn)
+            } else if (600..=1199).contains(&arfcn) {
+                // Band 2
+                Ok(1930000000 + 100000 * (arfcn - 600))
+            } else if (1200..=1949).contains(&arfcn) {
+                // Band 3
+                Ok(1805000000 + 100000 * (arfcn - 1200))
+            } else if (1950..=2399).contains(&arfcn) {
+                // Band 4
+                Ok(2110000000 + 100000 * (arfcn - 1949))
+            } else if (2400..=2649).contains(&arfcn) {
+                // Band 5
+                Ok(869000000 + 100000 * (arfcn - 2400))
+            } else if (2750..=3449).contains(&arfcn) {
+                // Band 7
+                Ok(2620000000 + 100000 * (arfcn - 2750))
+            } else if (3450..=3799).contains(&arfcn) {
+                // Band 8
+                Ok(925000000 + 100000 * (arfcn - 3450))
+            } else if (3800..=4149).contains(&arfcn) {
+                // Band 9
+                Ok(1844900000 + 100000 * (arfcn - 3800))
+            } else if (4150..=4749).contains(&arfcn) {
+                // Band 10
+                Ok(2110000000 + 100000 * (arfcn - 4150))
+            } else if (4750..=4949).contains(&arfcn) {
+                // Band 11
+                Ok(1475900000 + 100000 * (arfcn - 4750))
+            } else if (5010..=5179).contains(&arfcn) {
+                // Band 12
+                Ok(729000000 + 100000 * (arfcn - 5010))
+            } else if (5180..=5279).contains(&arfcn) {
+                // Band 13
+                Ok(746000000 + 100000 * (arfcn - 5180))
+            } else if (5280..=5379).contains(&arfcn) {
+                // Band 14
+                Ok(758000000 + 100000 * (arfcn - 5280))
+            } else if (5730..=5849).contains(&arfcn) {
+                // Band 17
+                Ok(734000000 + 100000 * (arfcn - 5730))
+            } else if (5850..=5999).contains(&arfcn) {
+                // Band 18
+                Ok(860000000 + 100000 * (arfcn - 5850))
+            } else if (6000..=6149).contains(&arfcn) {
+                // Band 19
+                Ok(875000000 + 100000 * (arfcn - 6000))
+            } else if (6150..=6449).contains(&arfcn) {
+                // Band 20
+                Ok(791000000 + 100000 * (arfcn - 6150))
+            } else if (6450..=6599).contains(&arfcn) {
+                // Band 21
+                Ok(1495900000 + 100000 * (arfcn - 6450))
+            } else if (6600..=7399).contains(&arfcn) {
+                // Band 22
+                Ok(3510000000 + 100000 * (arfcn - 6600))
+            } else if (7700..=8039).contains(&arfcn) {
+                // Band 24
+                Ok(1525000000 + 100000 * (arfcn - 7700))
+            } else if (8040..=8689).contains(&arfcn) {
+                // Band 25
+                Ok(1930000000 + 100000 * (arfcn - 8040))
+            } else if (8690..=9039).contains(&arfcn) {
+                // Band 26
+                Ok(859000000 + 100000 * (arfcn - 8690))
+            } else if (9040..=9209).contains(&arfcn) {
+                // Band 27
+                Ok(852000000 + 100000 * (arfcn - 9040))
+            } else if (9210..=9659).contains(&arfcn) {
+                // Band 28
+                Ok(758000000 + 100000 * (arfcn - 9210))
+            } else if (9660..=9769).contains(&arfcn) {
+                // Band 29
+                Ok(728000000 + 100000 * (arfcn - 9660))
+            } else if (9770..=9869).contains(&arfcn) {
+                // Band 30
+                Ok(2350000000 + 100000 * (arfcn - 9770))
+            } else if (9870..=9919).contains(&arfcn) {
+                // Band 31
+                Ok(462500000 + 100000 * (arfcn - 9870))
+            } else if (9919..=10359).contains(&arfcn) {
+                // Band 32
+                Ok(1492000000 + 100000 * (arfcn - 9919))
+            } else if (131072..=131971).contains(&arfcn) {
+                // Band 65
+                Ok(2110000000 + 100000 * (arfcn - 131072))
+            } else if (131972..=132671).contains(&arfcn) {
+                // Band 66
+                Ok(2110000000 + 100000 * (arfcn - 131972))
+            } else if (132672..=132971).contains(&arfcn) {
+                // Band 68
+                Ok(753000000 + 100000 * (arfcn - 132672))
+            } else if (132972..=133121).contains(&arfcn) {
+                // Band 70
+                Ok(1995000000 + 100000 * (arfcn - 132972))
+            } else if (133122..=133471).contains(&arfcn) {
+                // Band 71
+                Ok(617000000 + 100000 * (arfcn - 133122))
+            } else {
+                Err(anyhow!("ARFCN out of range"))
+            }
+        }
+        CellularType::NR => {
+            let (delta_f_global, f_ref_offs, n_ref_offs) = match arfcn {
+                0..=599999 => (5, 0, 0),
+                600000..=2016666 => (15, 3000000, 600000),
+                _ => (60, 24250080, 2016667),
+            };
+            // let n_ref = arfcn;
+            let freq = (f_ref_offs + (delta_f_global * (arfcn - n_ref_offs))) * 1000;
+            Ok(freq)
+        }
+    }
 }
 
 async fn cgi_get_token(base_addr: &str, user: &str, auth: &str) -> Result<HeaderMap> {
-    let url = format!("{}/cgi", base_addr);
+    let url = format!("http://{}/cgi", base_addr);
     let payload = format!(
         "{{
             \"id\":\"1\",\
@@ -79,7 +208,7 @@ async fn cgi_get_token(base_addr: &str, user: &str, auth: &str) -> Result<Header
 }
 
 async fn cgi_get_cell(base_addr: &str, header_map: &HeaderMap) -> Result<serde_json::Value> {
-    let url = format!("{}/cgi", base_addr);
+    let url = format!("http://{}/cgi", base_addr);
     let payload = "{\"id\":\"1\",\
                             \"execute\":1,\
                             \"core\":\"user\",\
@@ -100,27 +229,35 @@ async fn cgi_get_cell(base_addr: &str, header_map: &HeaderMap) -> Result<serde_j
     Ok(response_value)
 }
 
+async fn devpub_get_cell(base_addr: &str) -> Result<String> {
+    let url = format!("http://{}:7353/api/v1/celldata/connected/all", base_addr);
+    let resp = reqwest::Client::new()
+        .get(&url)
+        .header("Accept", "application/json, text/javascript, */*; q=0.01")
+        .send()
+        .await?;
+    let body = resp.text().await?;
+    Ok(body)
+}
+
 impl CellInfo {
     #[allow(dead_code)]
     #[tokio::main]
     pub async fn from_milesight_router(base_addr: &str, user: &str, auth: &str) -> Result<Self> {
         // Simulate fetching HTML response from a URL
         let token_headermap = cgi_get_token(base_addr, user, auth).await?;
-        println!("{token_headermap:#?}");
         let response_json = cgi_get_cell(base_addr, &token_headermap).await?;
         let cell_info = CellInfo::from_cgi_response(&response_json)?;
         Ok(cell_info)
     }
 
     #[allow(dead_code)]
-    pub async fn from_celldata_api(base_addr: &str) -> Result<Self> {
-        let resp = get(String::new() + base_addr + "/api/cell")
-            .await?
-            .json::<HashMap<String, String>>()
-            .await?;
-        println!("{resp:#?}");
-        // TODO: Use actual API parameters
-        todo!()
+    #[tokio::main]
+    pub async fn from_devicepublisher(base_addr: &str) -> Result<Self> {
+        let response_json = devpub_get_cell(base_addr).await?;
+        let cell_data = serde_json::from_str::<Vec<CellData>>(&response_json)?;
+        let cell_info = CellInfo::from_devpub_celldata(&cell_data[0])?;
+        Ok(cell_info)
     }
 
     /* -------------------------- */
@@ -146,6 +283,22 @@ impl CellInfo {
         cell_info.rsrq = cgi_response_extract_rsrp(response_value)?;
         cell_info.rsrp = cgi_response_extract_rsrq(response_value)?;
         // TODO: Evaluate: Add estimated bandwidth?
+        Ok(cell_info)
+    }
+
+    pub fn from_devpub_celldata(cell_data: &CellData) -> Result<CellInfo> {
+        let mut cell_info: CellInfo = CellInfo {
+            cell_id: cell_data.id,
+            cell_type: CellularType::from_str(&cell_data.r#type)?,
+            frequency: 0,
+            rssi: cell_data.rssi,
+            rsrp: cell_data.rsrp,
+            rsrq: cell_data.rsrq,
+            dl_est: cell_data.estimatedDownBandwidth,
+            ul_est: cell_data.estimatedUpBandwidth,
+        };
+
+        cell_info.frequency = arfcn_to_frequency(cell_data.arfcn, &cell_info.cell_type)?;
         Ok(cell_info)
     }
 }
@@ -186,13 +339,13 @@ fn cgi_response_extract_cell_type(response: &serde_json::Value) -> Result<Cellul
 fn cgi_response_extract_frequency(
     response: &serde_json::Value,
     cell_type: &CellularType,
-) -> Result<u32> {
+) -> Result<u64> {
     let lte_pointer = "/result/0/get/0/value/more/earfcn";
     let nr_pointer = "/result/0/get/0/value/more/nrarfcn";
     if let Some(arfcn_str) = helper_json_pointer(response, lte_pointer)?.as_str() {
-        return arfcn_to_frequency(arfcn_str.parse::<u32>()?, cell_type);
+        return arfcn_to_frequency(arfcn_str.parse::<u64>()?, cell_type);
     } else if let Some(arfcn_str) = helper_json_pointer(response, nr_pointer)?.as_str() {
-        return arfcn_to_frequency(arfcn_str.parse::<u32>()?, cell_type);
+        return arfcn_to_frequency(arfcn_str.parse::<u64>()?, cell_type);
     }
     Err(anyhow!(
         "Could not extract ARFCN from response: {:#?}\n
@@ -287,6 +440,63 @@ mod tests {
         })
     }
 
+    const DUMMY_DEVICEPUBLISHER_RESPONSE: &str = r#"[
+    {
+        "id": 10,
+        "type": "LTE",
+        "arfcn": 1801,
+        "band": "1800",
+        "rssi": -89,
+        "rsrq": -13.0,
+        "rsrp": -120.0,
+        "estimatedDownBandwidth": 18245,
+        "estimatedUpBandwidth": 9064
+    }
+]"#;
+
+    #[test]
+    fn test_arfcn_to_frequency_lte() -> Result<()> {
+        let af_map_lte = [
+            (2750, 2620000000),  // Band 7
+            (1710, 1856000000),  // Band 3
+            (4400, 2135000000),  // Band 10
+            (5300, 760000000),   // Band 5
+            (6000, 875000000),   // Band 19
+            (6300, 806000000),   // Band 20
+            (300, 2140000000),   // Band 1
+        ];
+        let cell_type = CellularType::LTE;
+        assert_eq!(arfcn_to_frequency(af_map_lte[0].0, &cell_type)?, af_map_lte[0].1);
+        assert_eq!(arfcn_to_frequency(af_map_lte[1].0, &cell_type)?, af_map_lte[1].1);
+        assert_eq!(arfcn_to_frequency(af_map_lte[2].0, &cell_type)?, af_map_lte[2].1);
+        assert_eq!(arfcn_to_frequency(af_map_lte[3].0, &cell_type)?, af_map_lte[3].1);
+        assert_eq!(arfcn_to_frequency(af_map_lte[4].0, &cell_type)?, af_map_lte[4].1);
+        assert_eq!(arfcn_to_frequency(af_map_lte[5].0, &cell_type)?, af_map_lte[5].1);
+        assert_eq!(arfcn_to_frequency(af_map_lte[6].0, &cell_type)?, af_map_lte[6].1);
+        Ok(())
+    }
+
+    #[test]
+    fn test_arfcn_to_frequency_nr() -> Result<()> {
+        let af_map_nr = [
+            (151600, 758000000), // Band n28
+            (361000, 1805000000), // Band n3
+            (422000, 2110000000), // Band n1
+            (620000, 3300000000), // Band n78
+            (2016667, 24250080000), // Band n258
+        ];
+        let cell_type = CellularType::NR;
+        assert_eq!(arfcn_to_frequency(af_map_nr[0].0, &cell_type)?, af_map_nr[0].1);
+        assert_eq!(arfcn_to_frequency(af_map_nr[1].0, &cell_type)?, af_map_nr[1].1);
+        assert_eq!(arfcn_to_frequency(af_map_nr[2].0, &cell_type)?, af_map_nr[2].1);
+        assert_eq!(arfcn_to_frequency(af_map_nr[3].0, &cell_type)?, af_map_nr[3].1);
+        Ok(())
+    }
+
+    /* -------------------------- */
+    /*     Milesight cgi Tests    */
+    /* -------------------------- */
+
     #[test]
     fn test_cgi_response_extract_cell_id() -> Result<()> {
         let cell_id = cgi_response_extract_cell_id(&dummy_response())?;
@@ -304,7 +514,7 @@ mod tests {
     #[test]
     fn test_cgi_response_extract_frequency() -> Result<()> {
         let frequency = cgi_response_extract_frequency(&dummy_response(), &CellularType::LTE)?;
-        assert_eq!(frequency, 123_u32);
+        assert_eq!(frequency, 1815000000);
         Ok(())
     }
 
@@ -326,6 +536,23 @@ mod tests {
     fn test_cgi_response_extract_rsrq() -> Result<()> {
         let rsrp = cgi_response_extract_rsrq(&dummy_response())?;
         assert_eq!(rsrp, -8.0);
+        Ok(())
+    }
+
+    /* -------------------------- */
+    /*    DevicePublisher tests   */
+    /* -------------------------- */
+
+    #[test]
+    fn test_devpub_from_celldata() -> Result<()> {
+        let cell_data = serde_json::from_str::<Vec<CellData>>(DUMMY_DEVICEPUBLISHER_RESPONSE)?;
+        let cell_info = CellInfo::from_devpub_celldata(&cell_data[0])?;
+        assert_eq!(cell_info.cell_id, 10);
+        assert_eq!(cell_info.cell_type, CellularType::LTE);
+        assert_eq!(cell_info.rssi, -89.0);
+        assert_eq!(cell_info.rsrp, -120.0);
+        assert_eq!(cell_info.rsrq, -13.0);
+        assert_eq!(cell_info.frequency, 1865100000);
         Ok(())
     }
 }
