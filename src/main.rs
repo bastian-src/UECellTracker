@@ -18,7 +18,7 @@ use cell_info::CellInfo;
 use ngscope::config::NgScopeConfig;
 use ngscope::types::Message;
 use ngscope::{restart_ngscope, start_ngscope, stop_ngscope};
-use parse::{Arguments, MilesightArgs, DevicePublisherArgs};
+use parse::{Arguments, MilesightArgs};
 
 #[allow(dead_code)]
 fn init_dci_server(local_addr: &str, server_addr: &str) -> Result<UdpSocket> {
@@ -46,10 +46,8 @@ fn start_continuous_tracking(args: Arguments) -> Result<()> {
         &milesight_args.clone().milesight_auth.unwrap(),
     )?;
     let mut ngscope_process: Child;
-    let mut ngscope_config = NgScopeConfig::default();
-
-    ngscope_config.rnti = 0xFFFF;
-    ngscope_config.rf_config0.as_mut().unwrap().rf_freq = cell_info.frequency as u64;
+    let mut ngscope_config = NgScopeConfig { rnti: 0xFFFF, ..Default::default() };
+    ngscope_config.rf_config0.as_mut().unwrap().rf_freq = cell_info.frequency;
     ngscope_process = start_ngscope(&ngscope_config)?;
 
     while !util::is_notifier(&sigint) {
@@ -61,7 +59,7 @@ fn start_continuous_tracking(args: Arguments) -> Result<()> {
         if latest_cell_info.cell_id != cell_info.cell_id {
             // TODO: Determine the RNIT using RNTI matching
             ngscope_config.rnti = 0xFFFF;
-            ngscope_config.rf_config0.as_mut().unwrap().rf_freq = latest_cell_info.frequency as u64;
+            ngscope_config.rf_config0.as_mut().unwrap().rf_freq = latest_cell_info.frequency;
             ngscope_process = restart_ngscope(ngscope_process, &ngscope_config)?;
             cell_info = latest_cell_info.clone();
         }

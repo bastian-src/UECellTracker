@@ -44,7 +44,7 @@ pub fn ngscope_recv_single_message_type(socket: &UdpSocket) -> Result<(MessageTy
 pub fn ngscope_recv_single_message(socket: &UdpSocket) -> Result<Message> {
     let mut buf = [0u8; types::NGSCOPE_REMOTE_BUFFER_SIZE];
     let (nof_recv, _) = socket.recv_from(&mut buf)?;
-    Message::from_bytes(&buf[..nof_recv].to_vec())
+    Message::from_bytes(&buf[..nof_recv])
 }
 
 pub fn ngscope_validate_server(socket: &UdpSocket, server_addr: &str) -> Result<()> {
