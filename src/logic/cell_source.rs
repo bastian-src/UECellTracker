@@ -5,21 +5,26 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use crate::cell_info::CellInfo;
-use crate::logic::{WorkerState, WorkerType, MessageCellInfo, check_not_stopped, wait_until_running};
+use crate::logic::{
+    check_not_stopped, wait_until_running, MessageCellInfo, WorkerState, WorkerType,
+};
+use crate::parse::{Arguments, FlattenedCellApiConfig};
 
 pub struct CellSourceArgs {
     pub rx_app_state: BusReader<WorkerState>,
     pub tx_source_state: Sender<WorkerState>,
+    pub app_args: Arguments,
     pub tx_cell_info: Bus<MessageCellInfo>,
 }
 
-pub fn deploy_cell_source(
-    args: CellSourceArgs,
-) -> Result<JoinHandle<()>> {
+pub fn deploy_cell_source(args: CellSourceArgs) -> Result<JoinHandle<()>> {
     let thread = thread::spawn(move || {
-        let _ = run(args.rx_app_state,
-                    args.tx_source_state,
-                    args.tx_cell_info);
+        let _ = run(
+            args.rx_app_state,
+            args.tx_source_state,
+            args.app_args,
+            args.tx_cell_info,
+        );
     });
     Ok(thread)
 }
@@ -29,8 +34,8 @@ fn send_final_state(tx_sink_state: &Sender<WorkerState>) -> Result<()> {
 }
 
 fn wait_for_running(
-        rx_app_state: BusReader<WorkerState>,
-        tx_source_state: &Sender<WorkerState>,
+    rx_app_state: BusReader<WorkerState>,
+    tx_source_state: &Sender<WorkerState>,
 ) -> Result<BusReader<WorkerState>> {
     match wait_until_running(rx_app_state) {
         Ok(rx_app) => Ok(rx_app),
@@ -41,24 +46,35 @@ fn wait_for_running(
     }
 }
 
-fn retrieve_cell_info(args: Arguments) -> Result<CellInfo> {
-    let milesight_args: MilesightArgs = args.milesight.unwrap();
-    let latest_cell_info: CellInfo = CellInfo::from_milesight_router(
-        &milesight_args.clone().milesight_address.unwrap(),
-        &milesight_args.clone().milesight_user.unwrap(),
-        &milesight_args.clone().milesight_auth.unwrap(),
-    )?;
-
-
+fn retrieve_cell_info(cell_api: &FlattenedCellApiConfig) -> Result<CellInfo> {
+    match cell_api {
+        FlattenedCellApiConfig::Milesight(m_args) => CellInfo::from_milesight_router(
+            &m_args.milesight_address,
+            &m_args.milesight_user,
+            &m_args.milesight_auth,
+        ),
+        FlattenedCellApiConfig::DevicePublisher(dp_args) => {
+            CellInfo::from_devicepublisher(&dp_args.devpub_address)
+        }
+    }
 }
 
 fn run(
     mut rx_app_state: BusReader<WorkerState>,
     tx_source_state: Sender<WorkerState>,
-    _tx_cell_info: Bus<MessageCellInfo>,
+    app_args: Arguments,
+    mut tx_cell_info: Bus<MessageCellInfo>,
 ) -> Result<()> {
     tx_source_state.send(WorkerState::Running(WorkerType::CellSource))?;
     rx_app_state = wait_for_running(rx_app_state, &tx_source_state)?;
+    let cell_api_args = FlattenedCellApiConfig::from_unflattened(
+        app_args.cellapi.unwrap(),
+        app_args.milesight.unwrap(),
+        app_args.devicepublisher.unwrap(),
+    )?;
+    let mut last_cell_info: CellInfo = CellInfo {
+        cells: vec![],
+    };
 
     loop {
         thread::sleep(Duration::from_millis(1));
@@ -66,9 +82,15 @@ fn run(
             Ok(rx_app) => rx_app_state = rx_app,
             _ => break,
         }
+        if let Ok(cell_info) = retrieve_cell_info(&cell_api_args) {
+            println!("[source] cell_info: {:#?}", cell_info);
 
-        // TODO: Retrieve CellInfo
-        // TODO: If changed, send CellInfo to tx_cell_info
+            if !CellInfo::equal_content(&cell_info, &last_cell_info) {
+                tx_cell_info.broadcast(MessageCellInfo { cell_info: cell_info.clone() });
+                last_cell_info = cell_info;
+            }
+        }
+
         thread::sleep(Duration::from_secs(5));
     }
 

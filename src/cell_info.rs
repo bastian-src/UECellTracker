@@ -176,6 +176,23 @@ pub fn arfcn_to_frequency(arfcn: u64, cell_type: &CellularType) -> Result<u64> {
     }
 }
 
+impl CellInfo {
+    // Do not rely on cell_id, just check if frequency and cell_type are the same
+    pub fn equal_content(info_a: &CellInfo, info_b: &CellInfo) -> bool {
+        let a_cells = &info_a.cells;
+        let b_cells = &info_b.cells;
+
+        if a_cells.len() != b_cells.len() {
+            return false;
+        }
+        a_cells.iter().all(|a_cell| {
+            b_cells.iter().any(|b_cell| {
+                a_cell.frequency == b_cell.frequency && a_cell.cell_type == b_cell.cell_type
+            })
+        })
+    }
+}
+
 async fn cgi_get_token(base_addr: &str, user: &str, auth: &str) -> Result<HeaderMap> {
     let url = format!("http://{}/cgi", base_addr);
     let payload = format!(

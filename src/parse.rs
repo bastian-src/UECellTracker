@@ -1,4 +1,5 @@
 /// Credits: https://stackoverflow.com/questions/55133351/is-there-a-way-to-get-clap-to-use-default-values-from-a-file
+use anyhow::Result;
 use clap::{Args, Command, CommandFactory, Parser, ValueEnum};
 use serde::{Deserialize, Serialize};
 use std::{default, error::Error, path::PathBuf};
@@ -35,6 +36,12 @@ pub enum CellApiConfig {
     DevicePublisher,
 }
 
+#[derive(Clone, Debug)]
+pub enum FlattenedCellApiConfig {
+    Milesight(FlattenedMilesightArgs),
+    DevicePublisher(FlattenedDevicePublisherArgs),
+}
+
 #[derive(Args, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MilesightArgs {
     /// URL to fetch data from
@@ -48,6 +55,13 @@ pub struct MilesightArgs {
     pub milesight_auth: Option<String>,
 }
 
+#[derive(Clone, Debug)]
+pub struct FlattenedMilesightArgs {
+    pub milesight_address: String,
+    pub milesight_user: String,
+    pub milesight_auth: String,
+}
+
 #[derive(Args, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DevicePublisherArgs {
     /// Base address of DevicePublisher
@@ -56,6 +70,12 @@ pub struct DevicePublisherArgs {
     /// Some authentication
     #[arg(long, required = false)]
     pub devpub_auth: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct FlattenedDevicePublisherArgs {
+    pub devpub_address: String,
+    pub devpub_auth: String,
 }
 
 impl default::Default for Arguments {
@@ -123,5 +143,29 @@ impl Arguments {
         }
 
         Ok(self)
+    }
+}
+
+impl FlattenedCellApiConfig {
+    pub fn from_unflattened(
+        cell_api: CellApiConfig,
+        milesight_args: MilesightArgs,
+        devicepublisher_args: DevicePublisherArgs,
+    ) -> Result<FlattenedCellApiConfig> {
+        match cell_api {
+            CellApiConfig::Milesight => {
+                Ok(FlattenedCellApiConfig::Milesight(FlattenedMilesightArgs {
+                    milesight_address: milesight_args.milesight_address.unwrap(),
+                    milesight_user: milesight_args.milesight_user.unwrap(),
+                    milesight_auth: milesight_args.milesight_auth.unwrap(),
+                }))
+            }
+            CellApiConfig::DevicePublisher => Ok(FlattenedCellApiConfig::DevicePublisher(
+                FlattenedDevicePublisherArgs {
+                    devpub_address: devicepublisher_args.devpub_address.unwrap(),
+                    devpub_auth: devicepublisher_args.devpub_auth.unwrap(),
+                },
+            )),
+        }
     }
 }

@@ -17,12 +17,13 @@ use logic::cell_sink::{deploy_cell_sink, CellSinkArgs};
 use logic::cell_source::{deploy_cell_source, CellSourceArgs};
 use logic::ngscope_controller::{deploy_ngscope_controller, NgControlArgs};
 use logic::rnti_matcher::{deploy_rnti_matcher, RntiMatcherArgs};
-use logic::{WorkerState, WorkerType, NUM_OF_WORKERS, MessageCellInfo, MessageDci, MessageRnti};
+use logic::{MessageCellInfo, MessageDci, MessageRnti, WorkerState, WorkerType, NUM_OF_WORKERS};
 use parse::Arguments;
 use util::{is_notifier, prepare_sigint_notifier};
 
 fn deploy_app(
     tx_app_state: &mut Bus<WorkerState>,
+    app_args: &Arguments,
     tx_sink_state: Sender<WorkerState>,
     tx_source_state: Sender<WorkerState>,
     tx_ngcontrol_state: Sender<WorkerState>,
@@ -54,6 +55,7 @@ fn deploy_app(
     let source_args = CellSourceArgs {
         rx_app_state: tx_app_state.add_rx(),
         tx_source_state,
+        app_args: app_args.clone(),
         tx_cell_info,
     };
 
@@ -124,7 +126,7 @@ fn wait_all_running(
 
 fn main() -> Result<(), Box<dyn Error>> {
     println!("Hello, world!");
-    let _args: Arguments = Arguments::build()?;
+    let args: Arguments = Arguments::build()?;
 
     let sigint_notifier = prepare_sigint_notifier()?;
 
@@ -142,6 +144,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     ];
     let tasks = deploy_app(
         &mut tx_app_state,
+        &args,
         tx_sink_state,
         tx_source_state,
         tx_ngcontrol_state,
