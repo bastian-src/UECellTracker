@@ -4,6 +4,7 @@ use std::sync::mpsc::Sender;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
+use crate::cell_info::CellInfo;
 use crate::logic::{WorkerState, WorkerType, MessageCellInfo, check_not_stopped, wait_until_running};
 
 pub struct CellSourceArgs {
@@ -38,6 +39,17 @@ fn wait_for_running(
             Err(anyhow!("[source] Main did not send 'Running' message"))
         }
     }
+}
+
+fn retrieve_cell_info(args: Arguments) -> Result<CellInfo> {
+    let milesight_args: MilesightArgs = args.milesight.unwrap();
+    let latest_cell_info: CellInfo = CellInfo::from_milesight_router(
+        &milesight_args.clone().milesight_address.unwrap(),
+        &milesight_args.clone().milesight_user.unwrap(),
+        &milesight_args.clone().milesight_auth.unwrap(),
+    )?;
+
+
 }
 
 fn run(

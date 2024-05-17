@@ -80,13 +80,14 @@ fn start_continuous_tracking(args: Arguments) -> Result<()> {
         &milesight_args.clone().milesight_user.unwrap(),
         &milesight_args.clone().milesight_auth.unwrap(),
     )?;
+    let single_cell = cell_info.cells.first().unwrap();
     let mut ngscope_process: Child;
     let mut ngscope_config = NgScopeConfig {
         rnti: 0xFFFF,
         ..Default::default()
     };
 
-    ngscope_config.rf_config0.as_mut().unwrap().rf_freq = cell_info.frequency;
+    ngscope_config.rf_config0.as_mut().unwrap().rf_freq = single_cell.frequency;
     ngscope_process = start_ngscope(&ngscope_config)?;
 
     while !util::is_notifier(&sigint) {
@@ -95,10 +96,11 @@ fn start_continuous_tracking(args: Arguments) -> Result<()> {
             &milesight_args.clone().milesight_user.unwrap(),
             &milesight_args.clone().milesight_auth.unwrap(),
         )?;
-        if latest_cell_info.cell_id != cell_info.cell_id {
+        let latest_single_cell = cell_info.cells.first().unwrap();
+        if latest_single_cell.cell_id != single_cell.cell_id {
             // TODO: Determine the RNIT using RNTI matching
             ngscope_config.rnti = 0xFFFF;
-            ngscope_config.rf_config0.as_mut().unwrap().rf_freq = latest_cell_info.frequency;
+            ngscope_config.rf_config0.as_mut().unwrap().rf_freq = latest_single_cell.frequency;
             ngscope_process = restart_ngscope(ngscope_process, &ngscope_config)?;
             cell_info = latest_cell_info.clone();
         }

@@ -28,6 +28,11 @@ impl CellularType {
 
 #[derive(Debug, Clone)]
 pub struct CellInfo {
+    pub cells: Vec<SingleCell>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SingleCell {
     pub cell_id: u64,
     pub cell_type: CellularType,
     pub frequency: u64,
@@ -243,10 +248,9 @@ impl CellInfo {
     #[allow(dead_code)]
     #[tokio::main]
     pub async fn from_milesight_router(base_addr: &str, user: &str, auth: &str) -> Result<Self> {
-        // Simulate fetching HTML response from a URL
         let token_headermap = cgi_get_token(base_addr, user, auth).await?;
         let response_json = cgi_get_cell(base_addr, &token_headermap).await?;
-        let cell_info = CellInfo::from_cgi_response(&response_json)?;
+        let cell_info = Self::from_cgi_response(&response_json)?;
         Ok(cell_info)
     }
 
@@ -255,7 +259,7 @@ impl CellInfo {
     pub async fn from_devicepublisher(base_addr: &str) -> Result<Self> {
         let response_json = devpub_get_cell(base_addr).await?;
         let cell_data = serde_json::from_str::<Vec<CellData>>(&response_json)?;
-        let cell_info = CellInfo::from_devpub_celldata(&cell_data[0])?;
+        let cell_info = Self::from_devpub_celldata(cell_data)?;
         Ok(cell_info)
     }
 
@@ -264,7 +268,7 @@ impl CellInfo {
     /* -------------------------- */
 
     pub fn from_cgi_response(response_value: &serde_json::Value) -> Result<CellInfo> {
-        let mut cell_info: CellInfo = CellInfo {
+        let mut single_cell: SingleCell = SingleCell {
             cell_id: 0,
             cell_type: CellularType::LTE,
             frequency: 0,
@@ -275,29 +279,36 @@ impl CellInfo {
             ul_est: None,
         };
 
-        cell_info.cell_id = cgi_response_extract_cell_id(response_value)?;
-        cell_info.cell_type = cgi_response_extract_cell_type(response_value)?;
-        cell_info.frequency = cgi_response_extract_frequency(response_value, &cell_info.cell_type)?;
-        cell_info.rssi = cgi_response_extract_rssi(response_value)?;
-        cell_info.rsrq = cgi_response_extract_rsrp(response_value)?;
-        cell_info.rsrp = cgi_response_extract_rsrq(response_value)?;
+        single_cell.cell_id = cgi_response_extract_cell_id(response_value)?;
+        single_cell.cell_type = cgi_response_extract_cell_type(response_value)?;
+        single_cell.frequency =
+            cgi_response_extract_frequency(response_value, &single_cell.cell_type)?;
+        single_cell.rssi = cgi_response_extract_rssi(response_value)?;
+        single_cell.rsrq = cgi_response_extract_rsrp(response_value)?;
+        single_cell.rsrp = cgi_response_extract_rsrq(response_value)?;
         // TODO: Evaluate: Add estimated bandwidth?
-        Ok(cell_info)
+        Ok(CellInfo {
+            cells: [single_cell].to_vec(),
+        })
     }
 
-    pub fn from_devpub_celldata(cell_data: &CellData) -> Result<CellInfo> {
-        let mut cell_info: CellInfo = CellInfo {
-            cell_id: cell_data.id,
-            cell_type: CellularType::from_str(&cell_data.r#type)?,
-            frequency: 0,
-            rssi: cell_data.rssi,
-            rsrp: cell_data.rsrp,
-            rsrq: cell_data.rsrq,
-            dl_est: cell_data.estimatedDownBandwidth,
-            ul_est: cell_data.estimatedUpBandwidth,
-        };
+    pub fn from_devpub_celldata(cell_data: Vec<CellData>) -> Result<CellInfo> {
+        let mut cell_info = CellInfo { cells: vec![] };
+        for cell in cell_data.iter() {
+            let mut single_cell = SingleCell {
+                cell_id: cell.id,
+                cell_type: CellularType::from_str(&cell.r#type)?,
+                frequency: 0,
+                rssi: cell.rssi,
+                rsrp: cell.rsrp,
+                rsrq: cell.rsrq,
+                dl_est: cell.estimatedDownBandwidth,
+                ul_est: cell.estimatedUpBandwidth,
+            };
+            single_cell.frequency = arfcn_to_frequency(cell.arfcn, &single_cell.cell_type)?;
+            cell_info.cells.push(single_cell);
+        }
 
-        cell_info.frequency = arfcn_to_frequency(cell_data.arfcn, &cell_info.cell_type)?;
         Ok(cell_info)
     }
 }
@@ -578,13 +589,13 @@ mod tests {
     #[test]
     fn test_devpub_from_celldata() -> Result<()> {
         let cell_data = serde_json::from_str::<Vec<CellData>>(DUMMY_DEVICEPUBLISHER_RESPONSE)?;
-        let cell_info = CellInfo::from_devpub_celldata(&cell_data[0])?;
-        assert_eq!(cell_info.cell_id, 10);
-        assert_eq!(cell_info.cell_type, CellularType::LTE);
-        assert_eq!(cell_info.rssi, -89.0);
-        assert_eq!(cell_info.rsrp, -120.0);
-        assert_eq!(cell_info.rsrq, -13.0);
-        assert_eq!(cell_info.frequency, 1865100000);
+        let cell_info = CellInfo::from_devpub_celldata(cell_data)?;
+        assert_eq!(cell_info.cells.first().unwrap().cell_id, 10);
+        assert_eq!(cell_info.cells.first().unwrap().cell_type, CellularType::LTE);
+        assert_eq!(cell_info.cells.first().unwrap().rssi, -89.0);
+        assert_eq!(cell_info.cells.first().unwrap().rsrp, -120.0);
+        assert_eq!(cell_info.cells.first().unwrap().rsrq, -13.0);
+        assert_eq!(cell_info.cells.first().unwrap().frequency, 1865100000);
         Ok(())
     }
 }
