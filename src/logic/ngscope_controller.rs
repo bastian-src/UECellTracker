@@ -1,23 +1,22 @@
 use anyhow::Result;
-use bus::{BusReader, Bus};
+use bus::{Bus, BusReader};
 use std::net::UdpSocket;
 use std::process::Child;
 use std::sync::atomic::AtomicBool;
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::{Sender, TryRecvError};
 use std::sync::Arc;
 use std::thread;
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use crate::logic::{WorkerState, WorkerType, MessageCellInfo, MessageDci, check_not_stopped};
 use crate::cell_info::CellInfo;
+use crate::logic::{check_not_stopped, MessageCellInfo, MessageDci, WorkerState, WorkerType};
 use crate::ngscope;
 use crate::ngscope::config::NgScopeConfig;
 use crate::ngscope::types::Message;
 use crate::ngscope::{restart_ngscope, start_ngscope, stop_ngscope};
 use crate::parse::{Arguments, MilesightArgs};
 use crate::util;
-
 
 pub struct NgControlArgs {
     pub rx_app_state: BusReader<WorkerState>,
@@ -26,22 +25,39 @@ pub struct NgControlArgs {
     pub tx_dci: Bus<MessageDci>,
 }
 
-pub fn deploy_ngscope_controller(
-    args: NgControlArgs,
-) -> Result<JoinHandle<()>> {
+pub fn deploy_ngscope_controller(args: NgControlArgs) -> Result<JoinHandle<()>> {
     let thread = thread::spawn(move || {
-        let _ = run(args.rx_app_state,
-                    args.tx_ngcontrol_state,
-                    args.rx_cell_info,
-                    args.tx_dci);
+        let _ = run(
+            args.rx_app_state,
+            args.tx_ngcontrol_state,
+            args.rx_cell_info,
+            args.tx_dci,
+        );
     });
     Ok(thread)
+}
+
+enum CheckCellUpdateError {
+    NoUpdate(BusReader<MessageCellInfo>),
+    Disconnected,
+}
+
+fn check_cell_update(
+    mut rx_cell_info: BusReader<MessageCellInfo>,
+    ) -> Result<(CellInfo, BusReader<MessageCellInfo>), CheckCellUpdateError> {
+    match rx_cell_info.try_recv() {
+        Ok(msg) => {
+            Ok((msg.cell_info, rx_cell_info))
+        },
+        Err(TryRecvError::Empty) => Err(CheckCellUpdateError::NoUpdate(rx_cell_info)),
+        Err(TryRecvError::Disconnected) => Err(CheckCellUpdateError::Disconnected),
+    }
 }
 
 fn run(
     mut rx_app_state: BusReader<WorkerState>,
     tx_ngcontrol_state: Sender<WorkerState>,
-    _rx_cell_info: BusReader<MessageCellInfo>,
+    mut rx_cell_info: BusReader<MessageCellInfo>,
     _tx_dci: Bus<MessageDci>,
 ) -> Result<()> {
     tx_ngcontrol_state.send(WorkerState::Running(WorkerType::NgScopeController))?;
@@ -52,6 +68,18 @@ fn run(
         match check_not_stopped(rx_app_state) {
             Ok(rx_app) => rx_app_state = rx_app,
             _ => break,
+        }
+        match check_cell_update(rx_cell_info) {
+            Ok((cell_info, returnal)) => {
+                println!("[ngcontrol] cell_info: {:#?}", cell_info);
+                rx_cell_info = returnal;
+            },
+            Err(CheckCellUpdateError::NoUpdate(returnal)) => {
+                rx_cell_info = returnal;
+            },
+            Err(CheckCellUpdateError::Disconnected) => {
+                break;
+            },
         }
         // TODO: Check for new CellInfo -> set ngscope to new frequency
         // TODO: Forward ngsocpe dci messages to tx_dci
@@ -75,12 +103,12 @@ fn start_continuous_tracking(args: Arguments) -> Result<()> {
 
     let sigint: Arc<AtomicBool> = util::prepare_sigint_notifier()?;
     let milesight_args: MilesightArgs = args.milesight.unwrap();
-    let mut cell_info: CellInfo = CellInfo::from_milesight_router(
+    let cell_info: CellInfo = CellInfo::from_milesight_router(
         &milesight_args.clone().milesight_address.unwrap(),
         &milesight_args.clone().milesight_user.unwrap(),
         &milesight_args.clone().milesight_auth.unwrap(),
     )?;
-    let single_cell = cell_info.cells.first().unwrap();
+    let mut single_cell = cell_info.cells.first().unwrap().clone();
     let mut ngscope_process: Child;
     let mut ngscope_config = NgScopeConfig {
         rnti: 0xFFFF,
@@ -96,13 +124,13 @@ fn start_continuous_tracking(args: Arguments) -> Result<()> {
             &milesight_args.clone().milesight_user.unwrap(),
             &milesight_args.clone().milesight_auth.unwrap(),
         )?;
-        let latest_single_cell = cell_info.cells.first().unwrap();
+        let latest_single_cell = latest_cell_info.cells.first().unwrap();
         if latest_single_cell.cell_id != single_cell.cell_id {
             // TODO: Determine the RNIT using RNTI matching
             ngscope_config.rnti = 0xFFFF;
             ngscope_config.rf_config0.as_mut().unwrap().rf_freq = latest_single_cell.frequency;
             ngscope_process = restart_ngscope(ngscope_process, &ngscope_config)?;
-            cell_info = latest_cell_info.clone();
+            single_cell = latest_single_cell.clone();
         }
         thread::sleep(Duration::from_secs(10));
     }

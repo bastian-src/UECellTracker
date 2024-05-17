@@ -3,8 +3,8 @@ use std::sync::mpsc::TryRecvError;
 
 use bus::BusReader;
 
-use crate::ngscope::types::NgScopeCellDci;
 use crate::cell_info::CellInfo;
+use crate::ngscope::types::NgScopeCellDci;
 
 pub mod cell_sink;
 pub mod cell_source;
@@ -74,7 +74,6 @@ pub enum WorkerState {
 /* Worker Messaging */
 /*  --------------  */
 
-
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct MessageDci {
@@ -93,7 +92,6 @@ pub struct MessageRnti {
     rnti: u16,
 }
 
-
 /*  --------------  */
 /*   Logic Helper   */
 /*  --------------  */
@@ -102,27 +100,27 @@ pub enum AppError {
     Stopped(BusReader<WorkerState>),
 }
 
-pub fn check_not_stopped(mut rx_app_state: BusReader<WorkerState>) -> Result<BusReader<WorkerState>, AppError> {
+pub fn check_not_stopped(
+    mut rx_app_state: BusReader<WorkerState>,
+) -> Result<BusReader<WorkerState>, AppError> {
     match rx_app_state.try_recv() {
-        Ok(msg) => {
-            match msg {
-                WorkerState::Stopped(_) => Err(AppError::Stopped(rx_app_state)),
-                _ => Ok(rx_app_state),
-            }
+        Ok(msg) => match msg {
+            WorkerState::Stopped(_) => Err(AppError::Stopped(rx_app_state)),
+            _ => Ok(rx_app_state),
         },
         Err(TryRecvError::Empty) => Ok(rx_app_state),
         Err(TryRecvError::Disconnected) => Err(AppError::Stopped(rx_app_state)),
     }
 }
 
-pub fn wait_until_running(mut rx_app_state: BusReader<WorkerState>) -> Result<BusReader<WorkerState>, AppError> {
+pub fn wait_until_running(
+    mut rx_app_state: BusReader<WorkerState>,
+) -> Result<BusReader<WorkerState>, AppError> {
     match rx_app_state.recv() {
-        Ok(msg) => {
-            match msg {
-                WorkerState::Running(_) => Ok(rx_app_state),
-                WorkerState::Stopped(_) => Err(AppError::Stopped(rx_app_state)),
-                _ => Ok(rx_app_state),
-            }
+        Ok(msg) => match msg {
+            WorkerState::Running(_) => Ok(rx_app_state),
+            WorkerState::Stopped(_) => Err(AppError::Stopped(rx_app_state)),
+            _ => Ok(rx_app_state),
         },
         Err(_) => Err(AppError::Stopped(rx_app_state)),
     }
