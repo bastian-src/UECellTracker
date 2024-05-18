@@ -10,7 +10,11 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use crate::cell_info::CellInfo;
-use crate::logic::{check_not_stopped, MessageCellInfo, MessageDci, WorkerState, WorkerType};
+use crate::logic::{
+    check_not_stopped,
+    MessageCellInfo, MessageDci, WorkerState, WorkerType,
+    DEFAULT_WORKER_SLEEP_MS,
+};
 use crate::ngscope;
 use crate::ngscope::config::NgScopeConfig;
 use crate::ngscope::types::Message;
@@ -64,11 +68,14 @@ fn run(
     thread::sleep(Duration::from_secs(1));
 
     loop {
-        thread::sleep(Duration::from_millis(1));
+        /* <precheck> */
+        thread::sleep(Duration::from_millis(DEFAULT_WORKER_SLEEP_MS));
         match check_not_stopped(rx_app_state) {
             Ok(rx_app) => rx_app_state = rx_app,
             _ => break,
         }
+        /* </precheck> */
+
         match check_cell_update(rx_cell_info) {
             Ok((cell_info, returnal)) => {
                 println!("[ngcontrol] cell_info: {:#?}", cell_info);
@@ -78,12 +85,13 @@ fn run(
                 rx_cell_info = returnal;
             },
             Err(CheckCellUpdateError::Disconnected) => {
+                // TODO: print error properly
+                println!("[ngcontrol] err: rx_cell_info disconnected!");
                 break;
             },
         }
         // TODO: Check for new CellInfo -> set ngscope to new frequency
         // TODO: Forward ngsocpe dci messages to tx_dci
-        thread::sleep(Duration::from_secs(5));
     }
 
     tx_ngcontrol_state.send(WorkerState::Stopped(WorkerType::NgScopeController))?;

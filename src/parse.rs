@@ -103,12 +103,20 @@ impl Arguments {
         let app: Command = Arguments::command();
         let app_name: &str = app.get_name();
 
-        let args: Arguments = Arguments::parse()
-            .get_config_file(app_name)?
-            .set_config_file(app_name)?
-            .print_config_file(app_name)?;
-
-        Ok(args)
+        let parsed_args = Arguments::parse();
+        match parsed_args.clone().get_config_file(app_name) {
+            Ok(parsed_config_args) => {
+                let printed_args = parsed_config_args
+                    .print_config_file(app_name)?;
+                Ok(printed_args)
+            }
+            Err(_) => {
+                let printed_args = parsed_args
+                    .set_config_file(app_name)?
+                    .print_config_file(app_name)?;
+                Ok(printed_args)
+            }
+        }
     }
 
     /// Get configuration file.

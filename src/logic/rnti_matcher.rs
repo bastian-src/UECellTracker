@@ -5,7 +5,9 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use crate::logic::{
-    check_not_stopped, wait_until_running, MessageDci, MessageRnti, WorkerState, WorkerType,
+    check_not_stopped, wait_until_running,
+    MessageDci, MessageRnti, WorkerState, WorkerType,
+    DEFAULT_WORKER_SLEEP_MS,
 };
 
 pub struct RntiMatcherArgs {
@@ -54,14 +56,13 @@ fn run(
     rx_app_state = wait_for_running(rx_app_state, &tx_rntimatcher_state)?;
 
     loop {
-        thread::sleep(Duration::from_millis(1));
+        thread::sleep(Duration::from_millis(DEFAULT_WORKER_SLEEP_MS));
         match check_not_stopped(rx_app_state) {
             Ok(rx_app) => rx_app_state = rx_app,
             _ => break,
         }
         // TODO: Match rntis
         // TODO: Generate upstream pattern? -> maybe in another thread
-        thread::sleep(Duration::from_secs(5));
     }
 
     tx_rntimatcher_state.send(WorkerState::Stopped(WorkerType::RntiMatcher))?;

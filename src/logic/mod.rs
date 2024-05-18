@@ -12,6 +12,7 @@ pub mod ngscope_controller;
 pub mod rnti_matcher;
 
 pub const NUM_OF_WORKERS: usize = 4;
+pub const DEFAULT_WORKER_SLEEP_MS: u64 = 1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Hash, Eq)]
 pub enum WorkerType {

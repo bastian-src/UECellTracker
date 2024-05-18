@@ -5,8 +5,9 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use crate::logic::{
-    check_not_stopped, wait_until_running, MessageCellInfo, MessageDci, MessageRnti, WorkerState,
-    WorkerType,
+    check_not_stopped, wait_until_running,
+    MessageCellInfo, MessageDci, MessageRnti, WorkerState, WorkerType,
+    DEFAULT_WORKER_SLEEP_MS,
 };
 
 pub struct CellSinkArgs {
@@ -58,7 +59,7 @@ fn run(
     rx_app_state = wait_for_running(rx_app_state, &tx_sink_state)?;
 
     loop {
-        thread::sleep(Duration::from_millis(1));
+        thread::sleep(Duration::from_millis(DEFAULT_WORKER_SLEEP_MS));
         match check_not_stopped(rx_app_state) {
             Ok(rx_app) => rx_app_state = rx_app,
             _ => break,
@@ -66,7 +67,6 @@ fn run(
 
         // TODO: Consume rx_dci, rx_cell_info, and rx_rnti
         // TODO: -> Send combined message to some remote
-        thread::sleep(Duration::from_secs(5));
     }
 
     send_final_state(&tx_sink_state)?;

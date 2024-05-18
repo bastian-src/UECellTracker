@@ -5,7 +5,8 @@ use std::error::Error;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 use std::sync::Arc;
-use std::thread::JoinHandle;
+use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 mod cell_info;
 mod logic;
@@ -17,7 +18,10 @@ use logic::cell_sink::{deploy_cell_sink, CellSinkArgs};
 use logic::cell_source::{deploy_cell_source, CellSourceArgs};
 use logic::ngscope_controller::{deploy_ngscope_controller, NgControlArgs};
 use logic::rnti_matcher::{deploy_rnti_matcher, RntiMatcherArgs};
-use logic::{MessageCellInfo, MessageDci, MessageRnti, WorkerState, WorkerType, NUM_OF_WORKERS};
+use logic::{
+    MessageCellInfo, MessageDci, MessageRnti, WorkerState, WorkerType,
+    NUM_OF_WORKERS, DEFAULT_WORKER_SLEEP_MS,
+};
 use parse::Arguments;
 use util::{is_notifier, prepare_sigint_notifier};
 
@@ -156,6 +160,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     tx_app_state.broadcast(WorkerState::Running(WorkerType::Main));
 
     while !is_notifier(&sigint_notifier) {
+        thread::sleep(Duration::from_millis(DEFAULT_WORKER_SLEEP_MS));
         match rx_sink_state.try_recv() {
             Ok(resp) => println!("[main] sink_state: {:?}", resp),
             Err(TryRecvError::Empty) => { /* No message received, continue the loop */ }

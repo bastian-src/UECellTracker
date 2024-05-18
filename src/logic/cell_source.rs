@@ -6,7 +6,9 @@ use std::time::Duration;
 
 use crate::cell_info::CellInfo;
 use crate::logic::{
-    check_not_stopped, wait_until_running, MessageCellInfo, WorkerState, WorkerType,
+    check_not_stopped, wait_until_running,
+    MessageCellInfo, WorkerState, WorkerType,
+    DEFAULT_WORKER_SLEEP_MS,
 };
 use crate::parse::{Arguments, FlattenedCellApiConfig};
 
@@ -77,18 +79,25 @@ fn run(
     };
 
     loop {
-        thread::sleep(Duration::from_millis(1));
+        /* <precheck> */
+        thread::sleep(Duration::from_millis(DEFAULT_WORKER_SLEEP_MS));
         match check_not_stopped(rx_app_state) {
             Ok(rx_app) => rx_app_state = rx_app,
             _ => break,
         }
-        if let Ok(cell_info) = retrieve_cell_info(&cell_api_args) {
-            println!("[source] cell_info: {:#?}", cell_info);
+        /* </precheck> */
 
-            if !CellInfo::equal_content(&cell_info, &last_cell_info) {
-                tx_cell_info.broadcast(MessageCellInfo { cell_info: cell_info.clone() });
-                last_cell_info = cell_info;
-            }
+        match retrieve_cell_info(&cell_api_args) {
+            Ok(cell_info) => {
+                if !CellInfo::equal_content(&cell_info, &last_cell_info) {
+                    tx_cell_info.broadcast(MessageCellInfo { cell_info: cell_info.clone() });
+                    last_cell_info = cell_info;
+                }
+            },
+            Err(some_err) => {
+                // TODO: print error properly
+                println!("[source] err retriecing cell info: {:#?}", some_err);
+            },
         }
 
         thread::sleep(Duration::from_secs(5));
