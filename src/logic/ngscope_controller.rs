@@ -1,8 +1,10 @@
 use anyhow::{anyhow, Result};
 use bus::{Bus, BusReader};
+use std::fs::{File, self};
 use std::net::UdpSocket;
-use std::process::Child;
-use std::sync::mpsc::{Sender, TryRecvError, Receiver, channel};
+use std::path::Path;
+use std::process::{Child, Stdio};
+use std::sync::mpsc::{SyncSender, TryRecvError, Receiver, sync_channel};
 use std::thread;
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -12,22 +14,28 @@ use crate::logic::{
     check_not_stopped, wait_until_running, send_explicit_state,
     MessageCellInfo, MessageDci, WorkerState, WorkerType,
     ExplicitWorkerState, NgControlState,
-    DEFAULT_WORKER_SLEEP_MS,
+    DEFAULT_WORKER_SLEEP_MS, CHANNEL_SYNC_SIZE
 };
 use crate::ngscope;
 use crate::ngscope::config::NgScopeConfig;
 use crate::ngscope::types::Message;
-use crate::ngscope::{restart_ngscope, start_ngscope, stop_ngscope};
-use crate::parse::Arguments;
+use crate::ngscope::{
+    start_ngscope, stop_ngscope, ngscope_validate_server_send_initial, ngscope_validate_server_check
+};
+use crate::parse::{Arguments, FlattenedNgScopeArgs};
 
 
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum LocalDciState {
     Stop,
+    SendInitial,
+    WaitForServerAuth(u8),
+    ListenForDci,
 }
 
 pub struct NgControlArgs {
     pub rx_app_state: BusReader<WorkerState>,
-    pub tx_ngcontrol_state: Sender<WorkerState>,
+    pub tx_ngcontrol_state: SyncSender<WorkerState>,
     pub app_args: Arguments,
     pub rx_cell_info: BusReader<MessageCellInfo>,
     pub tx_dci: Bus<MessageDci>,
@@ -46,13 +54,13 @@ pub fn deploy_ngscope_controller(args: NgControlArgs) -> Result<JoinHandle<()>> 
     Ok(thread)
 }
 
-fn send_final_state(tx_sink_state: &Sender<WorkerState>) -> Result<()> {
+fn send_final_state(tx_sink_state: &SyncSender<WorkerState>) -> Result<()> {
     Ok(tx_sink_state.send(WorkerState::Stopped(WorkerType::CellSource))?)
 }
 
 fn wait_for_running(
     rx_app_state: &mut BusReader<WorkerState>,
-    tx_source_state: &Sender<WorkerState>,
+    tx_source_state: &SyncSender<WorkerState>,
 ) -> Result<()> {
     match wait_until_running(rx_app_state) {
         Ok(_) => Ok(()),
@@ -80,7 +88,7 @@ fn check_cell_update(
 
 fn run(
     mut rx_app_state: BusReader<WorkerState>,
-    tx_ngcontrol_state: Sender<WorkerState>,
+    tx_ngcontrol_state: SyncSender<WorkerState>,
     app_args: Arguments,
     mut rx_cell_info: BusReader<MessageCellInfo>,
     tx_dci: Bus<MessageDci>,
@@ -88,18 +96,21 @@ fn run(
     tx_ngcontrol_state.send(WorkerState::Running(WorkerType::NgScopeController))?;
     wait_for_running(&mut rx_app_state, &tx_ngcontrol_state)?;
 
+    let ng_args = FlattenedNgScopeArgs::from_unflattened(app_args.ngscope.unwrap())?;
     let mut ng_process_option: Option<Child> = None;
-    let mut ngscope_config = NgScopeConfig {
+    let ngscope_config = NgScopeConfig {
         ..Default::default()
     };
 
-    let (tx_dci_thread, rx_dci_thread) = channel::<LocalDciState>();
+    let (tx_dci_thread, rx_dci_thread) = sync_channel::<LocalDciState>(CHANNEL_SYNC_SIZE);
     let dci_thread = deploy_dci_fetcher_thread(
         rx_dci_thread,
         tx_dci,
+        ng_args.ng_local_addr.to_string(),
+        ng_args.ng_server_addr.to_string(),
     )?;
 
-    let mut ngcontrol_state: NgControlState = NgControlState::CheckingInitialCellInfo;
+    let mut ngcontrol_state: NgControlState = NgControlState::CheckingCellInfo;
 
     loop {
         /* <precheck> */
@@ -110,26 +121,27 @@ fn run(
         /* </precheck> */
 
         match ngcontrol_state {
-            NgControlState::CheckingInitialCellInfo => {
-                if let Some(cell_info) = check_cell_update(&mut rx_cell_info)? {
-                    println!("[ngcontrol] cell_info: {:#?}", cell_info);
-                    ngscope_config.rf_config0.as_mut().unwrap().rf_freq = cell_info.cells.first().unwrap().frequency;
-                    ng_process_option = Some(start_ngscope(&ngscope_config)?);
-                    ngcontrol_state = NgControlState::CheckingCellInfo;
-                }
-            },
             NgControlState::CheckingCellInfo => {
-                if let Some(cell_info) = check_cell_update(&mut rx_cell_info)? {
-                    println!("[ngcontrol] cell_info: {:#?}", cell_info);
-                    ngscope_config.rf_config0.as_mut().unwrap().rf_freq = cell_info.cells.first().unwrap().frequency;
-                    ng_process_option = match ng_process_option {
-                        Some(process) => { Some(restart_ngscope(process, &ngscope_config)?) },
-                        None => { Some(start_ngscope(&ngscope_config)?) },
-                    };
-                    ngcontrol_state = NgControlState::CheckingCellInfo;
-                }
+                ngcontrol_state = handle_cell_update(&mut rx_cell_info,
+                                                     &ngscope_config)?;
             },
-            _ => {},
+            NgControlState::TriggerListenDci => {
+                tx_dci_thread.send(LocalDciState::SendInitial)?;
+                ngcontrol_state = NgControlState::CheckingCellInfo;
+            },
+            NgControlState::SleepMs(time_ms, next_state) => {
+                thread::sleep(Duration::from_millis(time_ms));
+                ngcontrol_state = *next_state;
+            },
+            NgControlState::StartNgScope(config) => {
+                if let Some(ref mut process) = ng_process_option { stop_ngscope(process)?; }
+                (ngcontrol_state, ng_process_option) = handle_start_ngscope(&config, &ng_args)?;
+            },
+            NgControlState::StopNgScope => {
+                if let Some(ref mut process) = ng_process_option { stop_ngscope(process)?; }
+                ngcontrol_state = NgControlState::CheckingCellInfo;
+            },
+            _ => todo!(),
         }
     }
 
@@ -139,25 +151,69 @@ fn run(
                         )?;
     tx_dci_thread.send(LocalDciState::Stop)?;
     let _ = dci_thread.join();
-    if let Some(process) = ng_process_option {
+    if ng_process_option.is_some() {
         send_explicit_state(&tx_ngcontrol_state,
                             ExplicitWorkerState::NgControl(
                                 NgControlState::StoppingNgScopeProcess)
                             )?;
-        stop_ngscope(process)?;
+        stop_ngscope(&mut ng_process_option.unwrap())?;
     }
     tx_ngcontrol_state.send(WorkerState::Stopped(WorkerType::NgScopeController))?;
     Ok(())
 }
 
+fn handle_start_ngscope(
+    ng_conf: &NgScopeConfig,
+    ng_args: &FlattenedNgScopeArgs,
+) -> Result<(NgControlState, Option<Child>)> {
+    let (std_out, std_err) = match &ng_args.ng_log_file {
+        Some(path) => {
+            if Path::new(path).exists() {
+                fs::remove_file(path).unwrap();
+            }
+            let file_out = File::create(path)?;
+            let file_err = file_out.try_clone()?;
+            (Stdio::from(file_out), Stdio::from(file_err))
+        },
+        None => (Stdio::null(), Stdio::null()),
+    };
+    let new_ng_process = Some(start_ngscope(&ng_args.ng_path, ng_conf, std_out, std_err)?);
+    Ok((NgControlState::SleepMs(5000, Box::new(NgControlState::TriggerListenDci)), new_ng_process))
+}
+
+
+fn handle_cell_update(
+    rx_cell_info: &mut BusReader<MessageCellInfo>,
+    ng_conf: &NgScopeConfig,
+) -> Result<NgControlState> {
+    match check_cell_update(rx_cell_info)? {
+        Some(cell_info) => {
+            println!("[ngcontrol] cell_info: {:#?}", cell_info);
+            if cell_info.cells.is_empty() {
+                return Ok(NgControlState::StopNgScope);
+            }
+            // TODO: Handle multi cell
+            let mut new_conf = ng_conf.clone();
+            new_conf.rf_config0.as_mut().unwrap().rf_freq = cell_info.cells.first().unwrap().frequency;
+            Ok(NgControlState::StartNgScope(Box::new(new_conf)))
+        }
+        _ => Ok(NgControlState:: CheckingCellInfo),
+    }
+}
+
+
 fn deploy_dci_fetcher_thread(
     rx_local_dci_state: Receiver<LocalDciState>,
     tx_dci: Bus<MessageDci>,
+    local_socket_addr: String,
+    ng_server_addr: String,
 ) -> Result<JoinHandle<()>> {
     let thread = thread::spawn(move || {
         let _ = run_dci_fetcher(
             rx_local_dci_state,
-            tx_dci
+            tx_dci,
+            local_socket_addr,
+            ng_server_addr,
         );
     });
     Ok(thread)
@@ -166,19 +222,47 @@ fn deploy_dci_fetcher_thread(
 fn run_dci_fetcher(
     rx_local_dci_state: Receiver<LocalDciState>,
     mut tx_dci: Bus<MessageDci>,
+    local_socket_addr: String,
+    ng_server_addr: String,
 ) -> Result<()> {
-    // TODO: pass ngscope addr:port information
-    let local_addr = "0.0.0.0:8888";
-    let server_addr = "0.0.0.0:6767";
-    let socket = init_dci_server(local_addr, server_addr)?;
+    let socket = init_dci_server(&local_socket_addr)?;
+    let mut dci_state: LocalDciState = LocalDciState::ListenForDci;
+
     loop {
         thread::sleep(Duration::from_millis(DEFAULT_WORKER_SLEEP_MS));
-        match local_dci_check_not_stopped(&rx_local_dci_state) {
-            Ok(_) => {},
-            _ => break,
+        if let Some(new_state) = check_rx_state(&rx_local_dci_state)? {
+            dci_state = new_state;
         }
 
-        if let Ok(msg) = ngscope::ngscope_recv_single_message(&socket) {
+        match dci_state {
+            LocalDciState::Stop => { break; },
+            LocalDciState::SendInitial => {
+                dci_state = match ngscope_validate_server_send_initial(&socket, &ng_server_addr) {
+                    Ok(_) => LocalDciState::WaitForServerAuth(0),
+                    Err(_) => LocalDciState::SendInitial,
+                };
+            },
+            LocalDciState::WaitForServerAuth(successful_auths) => { 
+                dci_state = match ngscope_validate_server_check(&socket)? {
+                    Some(_) => {
+                        if successful_auths >= 1 {
+                            LocalDciState::ListenForDci
+                        } else {
+                            LocalDciState::WaitForServerAuth(successful_auths + 1)
+                        }
+                    },
+                    None => LocalDciState::WaitForServerAuth(successful_auths),
+                };
+            },
+            LocalDciState::ListenForDci => { check_ngscope_message(&socket, &mut tx_dci) },
+        }
+    }
+    Ok(())
+}
+
+fn check_ngscope_message(socket: &UdpSocket, tx_dci: &mut Bus<MessageDci>) {
+    match ngscope::ngscope_recv_single_message(socket) {
+        Ok(msg) => {
             match msg {
                 Message::CellDci(cell_dci) => {
                     println!(
@@ -192,6 +276,7 @@ fn run_dci_fetcher(
                         cell_dci.total_ul_reTx
                     );
 
+                    // TODO: Take items from the bus.
                     tx_dci.broadcast(MessageDci { ngscope_dci: *cell_dci });
                 }
                 Message::Dci(ue_dci) => {
@@ -206,31 +291,28 @@ fn run_dci_fetcher(
                 Message::Start => {}
                 Message::Exit => {}
             }
-        } else {
-            // TODO: print error properly
-            println!("could not receive message..")
+        },
+        _ => {
+            // TODO: print error properly? it also goes here when there just hasn't been a message
         }
     }
-    Ok(())
 }
 
-fn local_dci_check_not_stopped(
+fn check_rx_state(
     rx_local_dci_state: &Receiver<LocalDciState>,
-) -> Result<()> {
+) -> Result<Option<LocalDciState>> {
     match rx_local_dci_state.try_recv() {
-        Ok(msg) => match msg {
-            LocalDciState::Stop => Err(anyhow!("[ngcontrol.local_dci_fetcher] received stop")),
-            // _ => Ok(()), <- use this if LocalDciState gets more fields
-        },
-        Err(TryRecvError::Empty) => Ok(()),
+        Ok(msg) => Ok(Some(msg)),
+        Err(TryRecvError::Empty) => Ok(None),
         Err(TryRecvError::Disconnected) => Err(anyhow!("[ngcontrol.local_dci_fetcher] rx_local_dci_state disconnected")),
     }
 }
 
 #[allow(dead_code)]
-fn init_dci_server(local_addr: &str, server_addr: &str) -> Result<UdpSocket> {
-    let socket = UdpSocket::bind(local_addr).unwrap();
-    ngscope::ngscope_validate_server(&socket, server_addr).expect("server validation error");
+fn init_dci_server(local_addr: &str) -> Result<UdpSocket> {
+    let socket = UdpSocket::bind(local_addr)?;
+    socket.set_nonblocking(true)?;
+    // ngscope::ngscope_validate_server(&socket, server_addr).expect("server validation error");
 
     Ok(socket)
 }

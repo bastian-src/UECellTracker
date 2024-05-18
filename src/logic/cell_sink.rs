@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use bus::BusReader;
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::SyncSender;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -12,7 +12,7 @@ use crate::logic::{
 
 pub struct CellSinkArgs {
     pub rx_app_state: BusReader<WorkerState>,
-    pub tx_sink_state: Sender<WorkerState>,
+    pub tx_sink_state: SyncSender<WorkerState>,
     pub rx_cell_info: BusReader<MessageCellInfo>,
     pub rx_dci: BusReader<MessageDci>,
     pub rx_rnti: BusReader<MessageRnti>,
@@ -31,13 +31,13 @@ pub fn deploy_cell_sink(args: CellSinkArgs) -> Result<JoinHandle<()>> {
     Ok(thread)
 }
 
-fn send_final_state(tx_sink_state: &Sender<WorkerState>) -> Result<()> {
+fn send_final_state(tx_sink_state: &SyncSender<WorkerState>) -> Result<()> {
     Ok(tx_sink_state.send(WorkerState::Stopped(WorkerType::CellSink))?)
 }
 
 fn wait_for_running(
     rx_app_state: &mut BusReader<WorkerState>,
-    tx_sink_state: &Sender<WorkerState>,
+    tx_sink_state: &SyncSender<WorkerState>,
 ) -> Result<()> {
     match wait_until_running(rx_app_state) {
         Ok(_) => Ok(()),
@@ -50,7 +50,7 @@ fn wait_for_running(
 
 fn run(
     mut rx_app_state: BusReader<WorkerState>,
-    tx_sink_state: Sender<WorkerState>,
+    tx_sink_state: SyncSender<WorkerState>,
     _rx_cell_info: BusReader<MessageCellInfo>,
     _rx_dci: BusReader<MessageDci>,
     _rx_rnti: BusReader<MessageRnti>,

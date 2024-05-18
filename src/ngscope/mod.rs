@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 
 use std::net::UdpSocket;
-use std::process::{Child, Command};
+use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::Duration;
 
@@ -15,30 +15,45 @@ use types::{Message, MessageType};
 
 const TMP_NGSCOPE_CONFIG_PATH: &str = "./.tmp_ngscope_conf.cfg";
 
-pub fn start_ngscope(config: &NgScopeConfig) -> Result<Child> {
+pub fn start_ngscope<T: Into<Stdio>>(exec_path: &str, config: &NgScopeConfig, proc_stdout: T, proc_stderr: T) -> Result<Child> {
     serde_libconfig::to_file(config, TMP_NGSCOPE_CONFIG_PATH)?;
-    let mut cmd = Command::new("./ngscpe");
-    cmd.arg("-c").arg(TMP_NGSCOPE_CONFIG_PATH);
-    let child = cmd.spawn()?;
+    let child = Command::new(exec_path)
+        .stdout(proc_stdout)
+        .stderr(proc_stderr)
+        .arg("-c")
+        .arg(TMP_NGSCOPE_CONFIG_PATH)
+        .spawn()?;
     Ok(child)
 }
 
-pub fn stop_ngscope(mut child: Child) -> Result<()> {
+pub fn stop_ngscope(child: &mut Child) -> Result<()> {
     child.kill()?;
     Ok(())
 }
 
-pub fn restart_ngscope(child: Child, config: &NgScopeConfig) -> Result<Child> {
+#[allow(dead_code)]
+pub fn restart_ngscope<T: Into<Stdio>>(child: &mut Child, exec_path: &str, config: &NgScopeConfig, proc_stdout: T, proc_stderr: T) -> Result<Child> {
     stop_ngscope(child)?;
     thread::sleep(Duration::from_secs(3));
-    let new_child = start_ngscope(config)?;
+    let new_child = start_ngscope(exec_path, config, proc_stdout, proc_stderr)?;
     Ok(new_child)
 }
 
 pub fn ngscope_recv_single_message_type(socket: &UdpSocket) -> Result<(MessageType, Vec<u8>)> {
     let mut buf = [0u8; types::NGSCOPE_REMOTE_BUFFER_SIZE];
-    let (nof_recv, _) = socket.recv_from(&mut buf)?;
-    types::ngscope_extract_packet(&buf[..nof_recv])
+    loop {
+        if let Ok((nof_recv, _)) = socket.recv_from(&mut buf) {
+            return types::ngscope_extract_packet(&buf[..nof_recv])
+        }
+    }
+}
+
+pub fn ngscope_recv_single_message_type_non_blocking(socket: &UdpSocket) -> Result<(MessageType, Vec<u8>)> {
+    let mut buf = [0u8; types::NGSCOPE_REMOTE_BUFFER_SIZE];
+    match socket.recv_from(&mut buf) {
+        Ok((nof_recv, _)) => types::ngscope_extract_packet(&buf[..nof_recv]),
+        Err(err) => Err(err.into()),
+    }
 }
 
 pub fn ngscope_recv_single_message(socket: &UdpSocket) -> Result<Message> {
@@ -47,6 +62,7 @@ pub fn ngscope_recv_single_message(socket: &UdpSocket) -> Result<Message> {
     Message::from_bytes(&buf[..nof_recv])
 }
 
+#[allow(dead_code)]
 pub fn ngscope_validate_server(socket: &UdpSocket, server_addr: &str) -> Result<()> {
     let init_sequence = MessageType::Start.to_bytes();
     socket
@@ -75,4 +91,24 @@ pub fn ngscope_validate_server(socket: &UdpSocket, server_addr: &str) -> Result<
         "Could not validate message within {} tries",
         types::NOF_VALIDATE_RETRIES
     ))
+}
+
+pub fn ngscope_validate_server_send_initial(socket: &UdpSocket, server_addr: &str) -> Result<()> {
+    let init_sequence = MessageType::Start.to_bytes();
+    socket.send_to(&init_sequence, server_addr)?;
+    Ok(())
+}
+
+pub fn ngscope_validate_server_check(socket: &UdpSocket) -> Result<Option<()>> {
+    let msg_type = ngscope_recv_single_message_type_non_blocking(socket);
+    match msg_type {
+        Ok((msg_type, _)) => match msg_type {
+            MessageType::Start
+            | MessageType::Dci
+            | MessageType::CellDci
+            | MessageType::Config => Ok(Some(())),
+            MessageType::Exit => Err(anyhow!("Received Exit from ngscope server during validation")),
+        },
+        Err(_) => Ok(None),
+    }
 }

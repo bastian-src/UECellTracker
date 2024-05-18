@@ -1,11 +1,12 @@
 use std::fmt::Debug;
-use std::sync::mpsc::{TryRecvError, Sender};
+use std::sync::mpsc::{TryRecvError, SyncSender};
 use std::fmt;
 
 use anyhow::Result;
 use bus::BusReader;
 
 use crate::cell_info::CellInfo;
+use crate::ngscope::config::NgScopeConfig;
 use crate::ngscope::types::NgScopeCellDci;
 
 pub mod cell_sink;
@@ -15,6 +16,7 @@ pub mod rnti_matcher;
 
 pub const NUM_OF_WORKERS: usize = 4;
 pub const DEFAULT_WORKER_SLEEP_MS: u64 = 1;
+pub const CHANNEL_SYNC_SIZE: usize = 10;
 pub const BUS_SIZE_APP_STATE: usize = 50;
 pub const BUS_SIZE_DCI: usize = 10000;
 pub const BUS_SIZE_CELL_INFO: usize = 100;
@@ -43,7 +45,7 @@ impl fmt::Display for WorkerType {
 }
 
 #[allow(dead_code)]
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ExplicitWorkerState {
     Main(MainState),
     Sink(SinkState),
@@ -79,17 +81,21 @@ pub enum RntiMatcherState {
 }
 
 #[allow(dead_code)]
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum NgControlState {
-    CheckingInitialCellInfo,
     CheckingCellInfo,
+    StartNgScope(Box<NgScopeConfig>),
+    StopNgScope,
+    TriggerListenDci,
+    SleepMs(u64, Box<NgControlState>),
     StoppingDciFetcherThread,
     RestartingNgScopeProcess,
     StoppingNgScopeProcess,
+    Idle,
 }
 
 #[allow(dead_code)]
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum WorkerState {
     Running(WorkerType),
     Stopped(WorkerType),
@@ -155,7 +161,7 @@ pub fn wait_until_running(
     }
 }
 
-pub fn send_explicit_state(tx_state: &Sender<WorkerState>, state: ExplicitWorkerState) -> Result<()> {
+pub fn send_explicit_state(tx_state: &SyncSender<WorkerState>, state: ExplicitWorkerState) -> Result<()> {
     let worker_type = match state {
         ExplicitWorkerState::Main(_) => WorkerType::Main,
         ExplicitWorkerState::Sink(_) => WorkerType::CellSink,

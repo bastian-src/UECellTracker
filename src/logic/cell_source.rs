@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use bus::{Bus, BusReader};
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::SyncSender;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -18,7 +18,7 @@ const WAIT_TO_RETRIEVE_CELL_INFO_MS: u64 = 500;
 
 pub struct CellSourceArgs {
     pub rx_app_state: BusReader<WorkerState>,
-    pub tx_source_state: Sender<WorkerState>,
+    pub tx_source_state: SyncSender<WorkerState>,
     pub app_args: Arguments,
     pub tx_cell_info: Bus<MessageCellInfo>,
 }
@@ -35,13 +35,13 @@ pub fn deploy_cell_source(args: CellSourceArgs) -> Result<JoinHandle<()>> {
     Ok(thread)
 }
 
-fn send_final_state(tx_sink_state: &Sender<WorkerState>) -> Result<()> {
+fn send_final_state(tx_sink_state: &SyncSender<WorkerState>) -> Result<()> {
     Ok(tx_sink_state.send(WorkerState::Stopped(WorkerType::CellSource))?)
 }
 
 fn wait_for_running(
     rx_app_state: &mut BusReader<WorkerState>,
-    tx_source_state: &Sender<WorkerState>,
+    tx_source_state: &SyncSender<WorkerState>,
 ) -> Result<()> {
     match wait_until_running(rx_app_state) {
         Ok(_) => Ok(()),
@@ -67,7 +67,7 @@ fn retrieve_cell_info(cell_api: &FlattenedCellApiConfig) -> Result<CellInfo> {
 
 fn run(
     mut rx_app_state: BusReader<WorkerState>,
-    tx_source_state: Sender<WorkerState>,
+    tx_source_state: SyncSender<WorkerState>,
     app_args: Arguments,
     mut tx_cell_info: Bus<MessageCellInfo>,
 ) -> Result<()> {
