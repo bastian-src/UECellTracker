@@ -2,7 +2,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::option::Option;
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[allow(non_snake_case)]
 pub struct NgScopeConfigRfDev {
     pub rf_freq: u64,
@@ -19,7 +19,7 @@ pub struct NgScopeConfigRfDev {
     pub log_phich: Option<bool>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct NgScopeConfigDciLog {
     pub nof_cell: u16,
     pub log_ul: bool,
@@ -27,7 +27,7 @@ pub struct NgScopeConfigDciLog {
     pub log_interval: u16,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct NgScopeConfig {
     pub nof_rf_dev: u16,
     pub rnti: u16,
@@ -62,7 +62,7 @@ impl Default for NgScopeConfigRfDev {
             N_id_2: -1,
             rf_args: "serial=3295B62".to_string(),
             nof_thread: 4,
-            disable_plot: None,
+            disable_plot: Some(true),
             log_dl: None,
             log_ul: None,
             log_phich: None,
@@ -186,6 +186,7 @@ rf_config0 = {
     N_id_2 = -1;
     rf_args = "serial=3295B62";
     nof_thread = 4;
+    disable_plot = true;
 };"#;
 
     #[test]

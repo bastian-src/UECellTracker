@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use bus::{Bus, BusReader};
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::SyncSender;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -12,7 +12,7 @@ use crate::logic::{
 
 pub struct RntiMatcherArgs {
     pub rx_app_state: BusReader<WorkerState>,
-    pub tx_rntimatcher_state: Sender<WorkerState>,
+    pub tx_rntimatcher_state: SyncSender<WorkerState>,
     pub rx_dci: BusReader<MessageDci>,
     pub tx_rnti: Bus<MessageRnti>,
 }
@@ -29,13 +29,13 @@ pub fn deploy_rnti_matcher(args: RntiMatcherArgs) -> Result<JoinHandle<()>> {
     Ok(thread)
 }
 
-fn send_final_state(tx_rntimatcher_state: &Sender<WorkerState>) -> Result<()> {
+fn send_final_state(tx_rntimatcher_state: &SyncSender<WorkerState>) -> Result<()> {
     Ok(tx_rntimatcher_state.send(WorkerState::Stopped(WorkerType::RntiMatcher))?)
 }
 
 fn wait_for_running(
     rx_app_state: &mut BusReader<WorkerState>,
-    tx_rntimtacher_state: &Sender<WorkerState>,
+    tx_rntimtacher_state: &SyncSender<WorkerState>,
 ) -> Result<()> {
     match wait_until_running(rx_app_state) {
         Ok(_) => Ok(()),
@@ -48,7 +48,7 @@ fn wait_for_running(
 
 fn run(
     mut rx_app_state: BusReader<WorkerState>,
-    tx_rntimatcher_state: Sender<WorkerState>,
+    tx_rntimatcher_state: SyncSender<WorkerState>,
     _rx_dci: BusReader<MessageDci>,
     _tx_rnti: Bus<MessageRnti>,
 ) -> Result<()> {

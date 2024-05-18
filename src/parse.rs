@@ -20,9 +20,9 @@ pub struct Arguments {
     #[command(flatten)]
     pub devicepublisher: Option<DevicePublisherArgs>,
 
-    /// Path to the ng-scope executable
-    #[arg(short, long, required = false)]
-    pub ngscopepath: Option<String>,
+    #[command(flatten)]
+    pub ngscope: Option<NgScopeArgs>,
+
     /// Print additional information in the terminal
     #[arg(short('v'), long, required = false)]
     pub verbose: Option<bool>,
@@ -78,9 +78,37 @@ pub struct FlattenedDevicePublisherArgs {
     pub devpub_auth: String,
 }
 
+#[derive(Args, Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NgScopeArgs {
+    /// Path to the ng-scope executable
+    #[arg(long, required = false)]
+    pub ng_path: Option<String>,
+
+    /// Address of the UE Cell Tracker port to communicate with NG-Scope (addr:port)
+    #[arg(long, required = false)]
+    pub ng_local_addr: Option<String>,
+
+    /// Address of the NG-Scope remote interface (addr:port)
+    #[arg(long, required = false)]
+    pub ng_server_addr: Option<String>,
+
+    /// Filepath for stdout + stderr logging of the NG-Scope process 
+    #[arg(long, required = false)]
+    pub ng_log_file: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct FlattenedNgScopeArgs {
+    pub ng_path: String,
+    pub ng_local_addr: String,
+    pub ng_server_addr: String,
+    pub ng_log_file: Option<String>,
+}
+
 impl default::Default for Arguments {
     fn default() -> Self {
         Arguments {
+            verbose: Some(false),
             cellapi: Some(CellApiConfig::Milesight),
             milesight: Some(MilesightArgs {
                 milesight_address: Some("http://127.0.0.1".to_string()),
@@ -91,8 +119,12 @@ impl default::Default for Arguments {
                 devpub_address: Some("https://some.address".to_string()),
                 devpub_auth: Some("some_auth".to_string()),
             }),
-            ngscopepath: Some("/dev_ws/dependencies/ng-scope/build_x86/ngscope/src/".to_string()),
-            verbose: Some(false),
+            ngscope: Some(NgScopeArgs {
+                ng_path: Some("/dev_ws/dependencies/ng-scope/build_x86/ngscope/src/".to_string()),
+                ng_local_addr: Some("0.0.0.0:8888".to_string()),
+                ng_server_addr: Some("0.0.0.0:6767".to_string()),
+                ng_log_file: Some("./.ng_scope_log.txt".to_string()),
+            }),
         }
     }
 }
@@ -127,7 +159,7 @@ impl Arguments {
         self.cellapi = self.cellapi.or(config_file.cellapi);
         self.milesight = self.milesight.or(config_file.milesight);
         self.devicepublisher = self.devicepublisher.or(config_file.devicepublisher);
-        self.ngscopepath = self.ngscopepath.or(config_file.ngscopepath);
+        self.ngscope = self.ngscope.or(config_file.ngscope);
         self.verbose = self.verbose.or(config_file.verbose);
 
         Ok(self)
@@ -175,5 +207,16 @@ impl FlattenedCellApiConfig {
                 },
             )),
         }
+    }
+}
+
+impl FlattenedNgScopeArgs {
+    pub fn from_unflattened(ng_args: NgScopeArgs) -> Result<FlattenedNgScopeArgs> {
+        Ok(FlattenedNgScopeArgs {
+            ng_path: ng_args.ng_path.unwrap(),
+            ng_local_addr: ng_args.ng_local_addr.unwrap(),
+            ng_server_addr: ng_args.ng_server_addr.unwrap(),
+            ng_log_file: ng_args.ng_log_file,
+        })
     }
 }

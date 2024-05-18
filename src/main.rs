@@ -3,7 +3,7 @@ use bus::Bus;
 use std::collections::HashSet;
 use std::error::Error;
 use std::sync::atomic::AtomicBool;
-use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
+use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TryRecvError};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -20,7 +20,7 @@ use logic::ngscope_controller::{deploy_ngscope_controller, NgControlArgs};
 use logic::rnti_matcher::{deploy_rnti_matcher, RntiMatcherArgs};
 use logic::{
     MessageCellInfo, MessageDci, MessageRnti, MainState, WorkerState, WorkerType,
-    NUM_OF_WORKERS, DEFAULT_WORKER_SLEEP_MS, BUS_SIZE_APP_STATE, BUS_SIZE_DCI, BUS_SIZE_CELL_INFO, BUS_SIZE_RNTI,
+    NUM_OF_WORKERS, DEFAULT_WORKER_SLEEP_MS, BUS_SIZE_APP_STATE, BUS_SIZE_DCI, BUS_SIZE_CELL_INFO, BUS_SIZE_RNTI, CHANNEL_SYNC_SIZE
 };
 use parse::Arguments;
 use util::{is_notifier, prepare_sigint_notifier};
@@ -28,10 +28,10 @@ use util::{is_notifier, prepare_sigint_notifier};
 fn deploy_app(
     tx_app_state: &mut Bus<WorkerState>,
     app_args: &Arguments,
-    tx_sink_state: Sender<WorkerState>,
-    tx_source_state: Sender<WorkerState>,
-    tx_ngcontrol_state: Sender<WorkerState>,
-    tx_rntimatcher_state: Sender<WorkerState>,
+    tx_sink_state: SyncSender<WorkerState>,
+    tx_source_state: SyncSender<WorkerState>,
+    tx_ngcontrol_state: SyncSender<WorkerState>,
+    tx_rntimatcher_state: SyncSender<WorkerState>,
 ) -> Result<Vec<JoinHandle<()>>> {
     let mut tx_dci: Bus<MessageDci> = Bus::<MessageDci>::new(BUS_SIZE_DCI);
     let mut tx_cell_info: Bus<MessageCellInfo> = Bus::<MessageCellInfo>::new(BUS_SIZE_CELL_INFO);
@@ -136,10 +136,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     let sigint_notifier = prepare_sigint_notifier()?;
 
     let mut tx_app_state = Bus::<WorkerState>::new(BUS_SIZE_APP_STATE);
-    let (tx_sink_state, rx_sink_state) = channel::<WorkerState>();
-    let (tx_source_state, rx_source_state) = channel::<WorkerState>();
-    let (tx_ngcontrol_state, rx_ngcontrol_state) = channel::<WorkerState>();
-    let (tx_rntimatcher_state, rx_rntimatcher_state) = channel::<WorkerState>();
+    let (tx_sink_state, rx_sink_state) = sync_channel::<WorkerState>(CHANNEL_SYNC_SIZE);
+    let (tx_source_state, rx_source_state) = sync_channel::<WorkerState>(CHANNEL_SYNC_SIZE);
+    let (tx_ngcontrol_state, rx_ngcontrol_state) = sync_channel::<WorkerState>(CHANNEL_SYNC_SIZE);
+    let (tx_rntimatcher_state, rx_rntimatcher_state) = sync_channel::<WorkerState>(CHANNEL_SYNC_SIZE);
     let all_rx_states = [
         &rx_source_state,
         &rx_sink_state,
