@@ -34,11 +34,11 @@ fn send_final_state(tx_rntimatcher_state: &Sender<WorkerState>) -> Result<()> {
 }
 
 fn wait_for_running(
-    rx_app_state: BusReader<WorkerState>,
+    rx_app_state: &mut BusReader<WorkerState>,
     tx_rntimtacher_state: &Sender<WorkerState>,
-) -> Result<BusReader<WorkerState>> {
+) -> Result<()> {
     match wait_until_running(rx_app_state) {
-        Ok(rx_app) => Ok(rx_app),
+        Ok(_) => Ok(()),
         _ => {
             send_final_state(tx_rntimtacher_state)?;
             Err(anyhow!("[sink] Main did not send 'Running' message"))
@@ -53,14 +53,16 @@ fn run(
     _tx_rnti: Bus<MessageRnti>,
 ) -> Result<()> {
     tx_rntimatcher_state.send(WorkerState::Running(WorkerType::RntiMatcher))?;
-    rx_app_state = wait_for_running(rx_app_state, &tx_rntimatcher_state)?;
+    wait_for_running(&mut rx_app_state, &tx_rntimatcher_state)?;
 
     loop {
+        /* <precheck> */
         thread::sleep(Duration::from_millis(DEFAULT_WORKER_SLEEP_MS));
-        match check_not_stopped(rx_app_state) {
-            Ok(rx_app) => rx_app_state = rx_app,
-            _ => break,
+        if check_not_stopped(&mut rx_app_state).is_err() {
+            break;
         }
+        /* </precheck> */
+
         // TODO: Match rntis
         // TODO: Generate upstream pattern? -> maybe in another thread
     }

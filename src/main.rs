@@ -19,8 +19,8 @@ use logic::cell_source::{deploy_cell_source, CellSourceArgs};
 use logic::ngscope_controller::{deploy_ngscope_controller, NgControlArgs};
 use logic::rnti_matcher::{deploy_rnti_matcher, RntiMatcherArgs};
 use logic::{
-    MessageCellInfo, MessageDci, MessageRnti, WorkerState, WorkerType,
-    NUM_OF_WORKERS, DEFAULT_WORKER_SLEEP_MS,
+    MessageCellInfo, MessageDci, MessageRnti, MainState, WorkerState, WorkerType,
+    NUM_OF_WORKERS, DEFAULT_WORKER_SLEEP_MS, BUS_SIZE_APP_STATE, BUS_SIZE_DCI, BUS_SIZE_CELL_INFO, BUS_SIZE_RNTI,
 };
 use parse::Arguments;
 use util::{is_notifier, prepare_sigint_notifier};
@@ -33,9 +33,9 @@ fn deploy_app(
     tx_ngcontrol_state: Sender<WorkerState>,
     tx_rntimatcher_state: Sender<WorkerState>,
 ) -> Result<Vec<JoinHandle<()>>> {
-    let mut tx_dci: Bus<MessageDci> = Bus::<MessageDci>::new(10); // TODO: Evaluate bus size, put into constant
-    let mut tx_cell_info: Bus<MessageCellInfo> = Bus::<MessageCellInfo>::new(10); // TODO: Evaluate bus size, put into constant
-    let mut tx_rnti: Bus<MessageRnti> = Bus::<MessageRnti>::new(10); // TODO: Evaluate bus size, put into constant
+    let mut tx_dci: Bus<MessageDci> = Bus::<MessageDci>::new(BUS_SIZE_DCI);
+    let mut tx_cell_info: Bus<MessageCellInfo> = Bus::<MessageCellInfo>::new(BUS_SIZE_CELL_INFO);
+    let mut tx_rnti: Bus<MessageRnti> = Bus::<MessageRnti>::new(BUS_SIZE_RNTI);
 
     let sink_args = CellSinkArgs {
         rx_app_state: tx_app_state.add_rx(),
@@ -53,6 +53,7 @@ fn deploy_app(
     let ngcontrol_args = NgControlArgs {
         rx_app_state: tx_app_state.add_rx(),
         tx_ngcontrol_state,
+        app_args: app_args.clone(),
         rx_cell_info: tx_cell_info.add_rx(),
         tx_dci,
     };
@@ -134,8 +135,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let sigint_notifier = prepare_sigint_notifier()?;
 
-    let mut tx_app_state = Bus::<WorkerState>::new(10); // TODO: Evaluate bus size, put into
-                                                        // constant
+    let mut tx_app_state = Bus::<WorkerState>::new(BUS_SIZE_APP_STATE);
     let (tx_sink_state, rx_sink_state) = channel::<WorkerState>();
     let (tx_source_state, rx_source_state) = channel::<WorkerState>();
     let (tx_ngcontrol_state, rx_ngcontrol_state) = channel::<WorkerState>();
@@ -159,33 +159,49 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     tx_app_state.broadcast(WorkerState::Running(WorkerType::Main));
 
-    while !is_notifier(&sigint_notifier) {
-        thread::sleep(Duration::from_millis(DEFAULT_WORKER_SLEEP_MS));
-        match rx_sink_state.try_recv() {
-            Ok(resp) => println!("[main] sink_state: {:?}", resp),
-            Err(TryRecvError::Empty) => { /* No message received, continue the loop */ }
-            Err(TryRecvError::Disconnected) => {} // Handle disconnection if necessary
-        }
-        match rx_source_state.try_recv() {
-            Ok(resp) => println!("[main] source_state: {:?}", resp),
-            Err(TryRecvError::Empty) => { /* No message received, continue the loop */ }
-            Err(TryRecvError::Disconnected) => {} // Handle disconnection if necessary
-        }
-        match rx_ngcontrol_state.try_recv() {
-            Ok(resp) => println!("[main] ngcontrol_state: {:?}", resp),
-            Err(TryRecvError::Empty) => { /* No message received, continue the loop */ }
-            Err(TryRecvError::Disconnected) => {} // Handle disconnection if necessary
-        }
-        match rx_rntimatcher_state.try_recv() {
-            Ok(resp) => println!("[main] rntimatcher_state: {:?}", resp),
-            Err(TryRecvError::Empty) => { /* No message received, continue the loop */ }
-            Err(TryRecvError::Disconnected) => {} // Handle disconnection if necessary
-        }
-    }
-    tx_app_state.broadcast(WorkerState::Stopped(WorkerType::Main));
+    let mut app_state: MainState = MainState::Running;
 
-    for task in tasks {
-        let _ = task.join();
+    loop {
+        /* <precheck> */
+        thread::sleep(Duration::from_millis(DEFAULT_WORKER_SLEEP_MS));
+        if is_notifier(&sigint_notifier) && app_state != MainState::Stopping {
+            app_state = MainState::NotifyStop;
+        }
+        /* </precheck> */
+
+        match app_state {
+            MainState::Running => print_worker_messages(all_rx_states),
+            MainState::Stopping => {
+                print_worker_messages(all_rx_states);
+                if tasks.iter().all(|task| task.is_finished()) {
+                    break;
+                }
+            },
+            MainState::NotifyStop => {
+                tx_app_state.broadcast(WorkerState::Stopped(WorkerType::Main));
+                app_state = MainState::Stopping;
+            },
+        }
     }
+
     Ok(())
+}
+
+fn print_worker_messages(
+    rx_states: [&Receiver<WorkerState>; NUM_OF_WORKERS],
+) {
+    for rx_state in rx_states.iter() {
+        match rx_state.try_recv() {
+            Ok(resp) => {
+                let worker_type = match resp {
+                    WorkerState::Running(w_type) => w_type,
+                    WorkerState::Stopped(w_type) => w_type,
+                    WorkerState::Specific(w_type, _) => w_type,
+                };
+                println!("[main] message from {}: {:#?}", worker_type, resp);
+            }
+            Err(TryRecvError::Empty) => { /* No message received, continue the loop */ }
+            Err(TryRecvError::Disconnected) => {} // Handle disconnection if necessary
+        }
+    }
 }
