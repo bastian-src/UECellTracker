@@ -12,6 +12,10 @@ use crate::logic::{
 };
 use crate::parse::{Arguments, FlattenedCellApiConfig};
 
+
+const WAIT_TO_RETRIEVE_CELL_INFO_MS: u64 = 500;
+
+
 pub struct CellSourceArgs {
     pub rx_app_state: BusReader<WorkerState>,
     pub tx_source_state: Sender<WorkerState>,
@@ -36,11 +40,11 @@ fn send_final_state(tx_sink_state: &Sender<WorkerState>) -> Result<()> {
 }
 
 fn wait_for_running(
-    rx_app_state: BusReader<WorkerState>,
+    rx_app_state: &mut BusReader<WorkerState>,
     tx_source_state: &Sender<WorkerState>,
-) -> Result<BusReader<WorkerState>> {
+) -> Result<()> {
     match wait_until_running(rx_app_state) {
-        Ok(rx_app) => Ok(rx_app),
+        Ok(_) => Ok(()),
         _ => {
             send_final_state(tx_source_state)?;
             Err(anyhow!("[source] Main did not send 'Running' message"))
@@ -68,7 +72,8 @@ fn run(
     mut tx_cell_info: Bus<MessageCellInfo>,
 ) -> Result<()> {
     tx_source_state.send(WorkerState::Running(WorkerType::CellSource))?;
-    rx_app_state = wait_for_running(rx_app_state, &tx_source_state)?;
+    wait_for_running(&mut rx_app_state, &tx_source_state)?;
+
     let cell_api_args = FlattenedCellApiConfig::from_unflattened(
         app_args.cellapi.unwrap(),
         app_args.milesight.unwrap(),
@@ -81,9 +86,8 @@ fn run(
     loop {
         /* <precheck> */
         thread::sleep(Duration::from_millis(DEFAULT_WORKER_SLEEP_MS));
-        match check_not_stopped(rx_app_state) {
-            Ok(rx_app) => rx_app_state = rx_app,
-            _ => break,
+        if check_not_stopped(&mut rx_app_state).is_err() {
+            break;
         }
         /* </precheck> */
 
@@ -100,7 +104,7 @@ fn run(
             },
         }
 
-        thread::sleep(Duration::from_secs(5));
+        thread::sleep(Duration::from_millis(WAIT_TO_RETRIEVE_CELL_INFO_MS - DEFAULT_WORKER_SLEEP_MS));
     }
 
     send_final_state(&tx_source_state)?;
