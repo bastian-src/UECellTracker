@@ -8,3 +8,16 @@
 * Retrieve UE RNTI using UL RNTI matching
 * Transmit UE cell allocation information to target address
 * Log cell metrics and UE allocation information
+
+## Setup
+
+### Determine the DevicePublisher IP
+
+In case you are using the DevicePublsher app and connected to your device via
+USB-Tethering, the following command might come in handy to determine your
+smartphone IP. It shows the dns routes per interface:
+
+```
+sudo resolvectl dns
+```
+
