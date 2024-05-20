@@ -5,7 +5,7 @@ use std::option::Option;
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[allow(non_snake_case)]
 pub struct NgScopeConfigRfDev {
-    pub rf_freq: u64,
+    pub rf_freq: i64,
     pub N_id_2: i16,
     pub rf_args: String,
     pub nof_thread: u8,
@@ -63,9 +63,9 @@ impl Default for NgScopeConfigRfDev {
             rf_args: "serial=3295B62".to_string(),
             nof_thread: 4,
             disable_plot: Some(true),
-            log_dl: None,
-            log_ul: None,
-            log_phich: None,
+            log_dl: Some(false),
+            log_ul: Some(false),
+            log_phich: Some(false),
         }
     }
 }
@@ -85,10 +85,12 @@ impl Default for NgScopeConfig {
     fn default() -> Self {
         NgScopeConfig {
             nof_rf_dev: 1,
-            rnti: 0xffff,
-            remote_enable: None,
-            decode_single_ue: None,
-            decode_sib: None,
+            // It seems like the rnti influences the outcome even if it should just
+            // decode all RNTIs
+            rnti: 0x0001,
+            remote_enable: Some(true),
+            decode_single_ue: Some(false),
+            decode_sib: Some(true),
             dci_logs_path: None,
             sib_logs_path: None,
             dci_log_config: Some(NgScopeConfigDciLog::default()),
@@ -174,7 +176,10 @@ dci_log_config = {
 }"#;
 
     const DEFAULT_CONFIG_STR: &str = r#"nof_rf_dev = 1;
-rnti = 65535;
+rnti = 1;
+remote_enable = true;
+decode_single_ue = false;
+decode_sib = true;
 dci_log_config = {
     nof_cell = 1;
     log_ul = false;
@@ -182,11 +187,14 @@ dci_log_config = {
     log_interval = 5;
 };
 rf_config0 = {
-    rf_freq = 796000000;
+    rf_freq = 796000000L;
     N_id_2 = -1;
     rf_args = "serial=3295B62";
     nof_thread = 4;
     disable_plot = true;
+    log_dl = false;
+    log_ul = false;
+    log_phich = false;
 };"#;
 
     #[test]

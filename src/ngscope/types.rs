@@ -38,25 +38,41 @@ pub enum Message {
     Exit,
 }
 
+fn check_size(size: usize, bound: usize) -> Result<()> {
+    if size < bound {
+        return Err(anyhow!(
+            "Error converting bytes to NgScope message: bytes must be at least {}",
+            bound
+        ));
+    }
+    Ok(())
+}
+
 impl Message {
     pub fn from_bytes(bytes: &[u8]) -> Result<Message> {
-        if bytes.len() < NGSCOPE_MESSAGE_TYPE_SIZE {
-            return Err(anyhow!(
-                "bytes must be at least {}",
-                NGSCOPE_MESSAGE_TYPE_SIZE
-            ));
-        }
+        check_size(bytes.len(), NGSCOPE_MESSAGE_TYPE_SIZE)?;
         let msg_type_bytes: [u8; NGSCOPE_MESSAGE_TYPE_SIZE] =
             bytes[..NGSCOPE_MESSAGE_TYPE_SIZE].try_into().unwrap();
-        let _version_byte: u8 = bytes[NGSCOPE_MESSAGE_VERSION_POSITION];
-        let content_bytes: &[u8] = &bytes[NGSCOPE_MESSAGE_CONTENT_POSITION..];
         let msg: Message = match MessageType::from_bytes(&msg_type_bytes).unwrap() {
             MessageType::Start => Message::Start,
-            MessageType::Dci => Message::Dci(NgScopeUeDci::from_bytes(content_bytes.try_into()?)?),
-            MessageType::CellDci => Message::CellDci(Box::new(NgScopeCellDci::from_bytes(
-                content_bytes.try_into()?,
-            )?)),
+            MessageType::Dci => {
+                check_size(bytes.len(), NGSCOPE_MESSAGE_VERSION_POSITION + 1)?;
+                let _version_byte: u8 = bytes[NGSCOPE_MESSAGE_VERSION_POSITION];
+                let content_bytes: &[u8] = &bytes[NGSCOPE_MESSAGE_CONTENT_POSITION..];
+                Message::Dci(NgScopeUeDci::from_bytes(content_bytes.try_into()?)?)
+            }
+            MessageType::CellDci => {
+                check_size(bytes.len(), NGSCOPE_MESSAGE_VERSION_POSITION + 1)?;
+                let _version_byte: u8 = bytes[NGSCOPE_MESSAGE_VERSION_POSITION];
+                let content_bytes: &[u8] = &bytes[NGSCOPE_MESSAGE_CONTENT_POSITION..];
+                Message::CellDci(Box::new(NgScopeCellDci::from_bytes(
+                    content_bytes.try_into()?,
+                )?))
+            }
             MessageType::Config => {
+                check_size(bytes.len(), NGSCOPE_MESSAGE_VERSION_POSITION + 1)?;
+                let _version_byte: u8 = bytes[NGSCOPE_MESSAGE_VERSION_POSITION];
+                let content_bytes: &[u8] = &bytes[NGSCOPE_MESSAGE_CONTENT_POSITION..];
                 Message::Config(NgScopeCellConfig::from_bytes(content_bytes.try_into()?)?)
             }
             MessageType::Exit => Message::Exit,

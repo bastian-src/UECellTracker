@@ -1,11 +1,15 @@
-use std::fmt::Debug;
-use std::sync::mpsc::{TryRecvError, SyncSender};
-use std::fmt;
+#![allow(dead_code)]
 
-use anyhow::Result;
+use std::collections::HashMap;
+use std::fmt::Debug;
+use std::sync::mpsc::{Receiver, TryRecvError};
+
+use crate::util::print_info;
+use anyhow::{anyhow, Result};
 use bus::BusReader;
 
 use crate::cell_info::CellInfo;
+use crate::logic::rnti_matcher::TrafficCollection;
 use crate::ngscope::config::NgScopeConfig;
 use crate::ngscope::types::NgScopeCellDci;
 
@@ -13,93 +17,217 @@ pub mod cell_sink;
 pub mod cell_source;
 pub mod ngscope_controller;
 pub mod rnti_matcher;
+pub mod traffic_patterns;
 
 pub const NUM_OF_WORKERS: usize = 4;
-pub const DEFAULT_WORKER_SLEEP_MS: u64 = 1;
+pub const DEFAULT_WORKER_SLEEP_MS: u64 = 2;
+pub const DEFAULT_WORKER_SLEEP_US: u64 = 50;
+pub const WORKER_SLEEP_LONG_MS: u64 = 500;
 pub const CHANNEL_SYNC_SIZE: usize = 10;
 pub const BUS_SIZE_APP_STATE: usize = 50;
-pub const BUS_SIZE_DCI: usize = 10000;
+pub const BUS_SIZE_DCI: usize = 100000;
 pub const BUS_SIZE_CELL_INFO: usize = 100;
 pub const BUS_SIZE_RNTI: usize = 100;
 
-#[derive(Clone, Copy, Debug, PartialEq, Hash, Eq)]
-pub enum WorkerType {
-    Main,
-    CellSource,
-    CellSink,
-    NgScopeController,
-    RntiMatcher,
+pub trait WorkerState: Sized + Clone + Sync + Debug {
+    fn to_general_state(&self) -> GeneralState;
+    fn worker_name() -> String;
 }
 
-impl fmt::Display for WorkerType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let display_str = match self {
-            WorkerType::Main => "main",
-            WorkerType::CellSource => "cell_source",
-            WorkerType::CellSink => "cell_sink",
-            WorkerType::NgScopeController => "ngscope_controller",
-            WorkerType::RntiMatcher => "rnti_matcher",
-        };
-        write!(f, "{}", display_str)
+pub trait WorkerChannel<T: WorkerState> {
+    fn worker_try_recv(&self) -> Result<Option<T>, TryRecvError>;
+    fn worker_print_on_recv(&self) -> Result<Option<T>, TryRecvError>;
+    fn worker_try_recv_general_state(&self) -> Result<Option<GeneralState>>;
+    fn worker_recv_general_state(&self) -> Result<GeneralState>;
+}
+
+impl<T: WorkerState> WorkerChannel<T> for Receiver<T> {
+    fn worker_try_recv(&self) -> Result<Option<T>, TryRecvError> {
+        match self.try_recv() {
+            Ok(msg) => Ok(Some(msg)),
+            Err(TryRecvError::Empty) => Ok(None),
+            Err(TryRecvError::Disconnected) => Err(TryRecvError::Disconnected),
+        }
+    }
+
+    fn worker_print_on_recv(&self) -> Result<Option<T>, TryRecvError> {
+        match self.worker_try_recv() {
+            Ok(Some(msg)) => {
+                print_info(&format!(
+                    "[main] message from {}: {:#?}",
+                    T::worker_name(),
+                    msg
+                ));
+                Ok(Some(msg))
+            }
+            Ok(None) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    fn worker_recv_general_state(&self) -> Result<GeneralState> {
+        Ok(self.recv()?.to_general_state())
+    }
+
+    fn worker_try_recv_general_state(&self) -> Result<Option<GeneralState>> {
+        match self.try_recv() {
+            Ok(msg) => Ok(Some(msg.to_general_state())),
+            Err(TryRecvError::Empty) => Ok(None),
+            Err(TryRecvError::Disconnected) => Err(TryRecvError::Disconnected.into()),
+        }
     }
 }
 
-#[allow(dead_code)]
-#[derive(Clone, Debug, PartialEq)]
-pub enum ExplicitWorkerState {
-    Main(MainState),
-    Sink(SinkState),
-    Source(SourceState),
-    RntiMatcher(RntiMatcherState),
-    NgControl(NgControlState),
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum GeneralState {
+    Running,
+    Stopped,
+    Unknown,
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum MainState {
     Running,
-    Stopping,
+    Stopped,
     NotifyStop,
+    UeConnectionReset, /* NgScope has been restarted */
 }
 
-#[allow(dead_code)]
+impl WorkerState for MainState {
+    fn worker_name() -> String {
+        "main".to_owned()
+    }
+
+    fn to_general_state(&self) -> GeneralState {
+        match self {
+            MainState::Running => GeneralState::Running,
+            MainState::Stopped => GeneralState::Stopped,
+            _ => GeneralState::Unknown,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SinkState {
+    Running,
+    Stopped,
     SpecialState,
 }
 
-#[allow(dead_code)]
+impl WorkerState for SinkState {
+    fn worker_name() -> String {
+        "sink".to_owned()
+    }
+
+    fn to_general_state(&self) -> GeneralState {
+        match self {
+            SinkState::Running => GeneralState::Running,
+            SinkState::Stopped => GeneralState::Stopped,
+            _ => GeneralState::Unknown,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SourceState {
+    Running,
+    Stopped,
     SpecialState,
 }
 
-#[allow(dead_code)]
-#[derive(Clone, Copy, Debug, PartialEq)]
+impl WorkerState for SourceState {
+    fn worker_name() -> String {
+        "source".to_owned()
+    }
+
+    fn to_general_state(&self) -> GeneralState {
+        match self {
+            SourceState::Running => GeneralState::Running,
+            SourceState::Stopped => GeneralState::Stopped,
+            _ => GeneralState::Unknown,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum RntiMatcherState {
-    SpecialState,
+    Running,
+    Stopped,
+    Idle,
+    StartMatching,
+    MatchingCollectDci(Box<TrafficCollection>),
+    MatchingProcessDci(Box<TrafficCollection>),
+    MatchingPublishRnti(MessageRnti),
+    MatchingError(RntiMatchingErrorType),
+    StoppingTrafficGeneratorThread,
+    SleepMs(u64, Box<RntiMatcherState>),
 }
 
-#[allow(dead_code)]
+impl RntiMatcherState {
+    fn name(&self) -> String {
+        let name_str = match self {
+            RntiMatcherState::Running => "Running",
+            RntiMatcherState::Stopped => "Stopped",
+            RntiMatcherState::Idle => "Idle",
+            RntiMatcherState::StartMatching => "StartMatching",
+            RntiMatcherState::MatchingCollectDci(_) => "MatchingCollectDci",
+            RntiMatcherState::MatchingProcessDci(_) => "MatchingProcessDci",
+            RntiMatcherState::MatchingPublishRnti(_) => "MatchingPublishRnti",
+            RntiMatcherState::MatchingError(_) => "MatchingError",
+            RntiMatcherState::StoppingTrafficGeneratorThread => "StoppingTrafficGeneratorThread",
+            RntiMatcherState::SleepMs(_, _) => "Sleep",
+        };
+        name_str.to_owned()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum RntiMatchingErrorType {
+    ExceededDciTimestampDelta,
+}
+
+impl WorkerState for RntiMatcherState {
+    fn worker_name() -> String {
+        "rntimatcher".to_owned()
+    }
+
+    fn to_general_state(&self) -> GeneralState {
+        match self {
+            RntiMatcherState::Running => GeneralState::Running,
+            RntiMatcherState::Stopped => GeneralState::Stopped,
+            _ => GeneralState::Unknown,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum NgControlState {
+    Running,
+    Stopped,
     CheckingCellInfo,
     StartNgScope(Box<NgScopeConfig>),
     StopNgScope,
     TriggerListenDci,
+    WaitForTriggerResponse,
+    SuccessfulTriggerResponse,
     SleepMs(u64, Box<NgControlState>),
     StoppingDciFetcherThread,
     RestartingNgScopeProcess,
     StoppingNgScopeProcess,
-    Idle,
 }
 
-#[allow(dead_code)]
-#[derive(Clone, Debug, PartialEq)]
-pub enum WorkerState {
-    Running(WorkerType),
-    Stopped(WorkerType),
-    Specific(WorkerType, ExplicitWorkerState),
+impl WorkerState for NgControlState {
+    fn worker_name() -> String {
+        "ngcontrol".to_owned()
+    }
+
+    fn to_general_state(&self) -> GeneralState {
+        match self {
+            NgControlState::Running => GeneralState::Running,
+            NgControlState::Stopped => GeneralState::Stopped,
+            _ => GeneralState::Unknown,
+        }
+    }
 }
 
 /*  --------------  */
@@ -119,9 +247,10 @@ pub struct MessageCellInfo {
 }
 
 #[allow(dead_code)]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Default)]
 pub struct MessageRnti {
-    rnti: u16,
+    /* cell_id -> ue_rnti */
+    cell_rnti: HashMap<u64, (u16, f64)>,
 }
 
 /*  --------------  */
@@ -133,43 +262,24 @@ pub enum AppError {
     Disconnected,
 }
 
-pub fn check_not_stopped(
-    rx_app_state: &mut BusReader<WorkerState>,
-) -> Result<(), AppError> {
-    match rx_app_state.try_recv() {
-        Ok(msg) => {
-            match msg {
-                WorkerState::Stopped(_) => Err(AppError::Stopped),
-                _ => Ok(()),
-            }
-        }
-        Err(TryRecvError::Empty) => Ok(()),
-        Err(TryRecvError::Disconnected) => Err(AppError::Disconnected),
-    }
-}
-
-pub fn wait_until_running(
-    rx_app_state: &mut BusReader<WorkerState>,
-) -> Result<(), AppError> {
-    match rx_app_state.recv() {
-        Ok(msg) => match msg {
-            WorkerState::Running(_) => Ok(()),
-            WorkerState::Stopped(_) => Err(AppError::Stopped),
-            _ => Ok(()),
+pub fn check_not_stopped<T: WorkerState>(rx_state: &mut BusReader<T>) -> Result<Option<T>> {
+    match rx_state.try_recv() {
+        Ok(msg) => match msg.to_general_state() {
+            GeneralState::Stopped => Err(anyhow!("BusReader received GeneralState::Stopped!")),
+            _ => Ok(Some(msg)),
         },
-        Err(_) => Err(AppError::Stopped),
+        Err(TryRecvError::Empty) => Ok(None),
+        Err(TryRecvError::Disconnected) => Err(anyhow!("BusReader disconnected!")),
     }
 }
 
-pub fn send_explicit_state(tx_state: &SyncSender<WorkerState>, state: ExplicitWorkerState) -> Result<()> {
-    let worker_type = match state {
-        ExplicitWorkerState::Main(_) => WorkerType::Main,
-        ExplicitWorkerState::Sink(_) => WorkerType::CellSink,
-        ExplicitWorkerState::Source(_) => WorkerType::CellSource,
-        ExplicitWorkerState::RntiMatcher(_) => WorkerType::RntiMatcher,
-        ExplicitWorkerState::NgControl(_) => WorkerType::NgScopeController,
-    };
-
-    tx_state.send( WorkerState::Specific( worker_type, state))?;
-    Ok(())
+pub fn wait_until_running<T: WorkerState>(rx_state: &mut BusReader<T>) -> Result<()> {
+    match rx_state.recv() {
+        Ok(msg) => match msg.to_general_state() {
+            GeneralState::Running => Ok(()),
+            GeneralState::Stopped => Err(anyhow!("BusReader received GeneralState::Stopped!")),
+            GeneralState::Unknown => Ok(()),
+        },
+        Err(_) => Err(anyhow!("BusReader disconnected!")),
+    }
 }

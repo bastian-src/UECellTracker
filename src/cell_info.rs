@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use anyhow::{anyhow, Result};
 
 use regex::Regex;
@@ -6,8 +8,7 @@ use serde_derive::Deserialize;
 
 use crate::util::helper_json_pointer;
 
-// TODO: CellInfo should be able to hold several cell
-// Define the struct to hold cell information
+pub const REQUEST_TIMEOUT_MS: u64 = 2000;
 
 #[derive(Debug, Clone, PartialEq)]
 #[allow(clippy::upper_case_acronyms)]
@@ -32,6 +33,7 @@ pub struct CellInfo {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct SingleCell {
     pub cell_id: u64,
     pub cell_type: CellularType,
@@ -44,7 +46,7 @@ pub struct SingleCell {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-#[allow(non_snake_case)]
+#[allow(non_snake_case, dead_code)]
 pub struct CellData {
     pub id: u64,
     pub r#type: String,
@@ -207,6 +209,7 @@ async fn cgi_get_token(base_addr: &str, user: &str, auth: &str) -> Result<Header
     );
     let resp = reqwest::Client::new()
         .get(&url)
+        .timeout(Duration::from_millis(REQUEST_TIMEOUT_MS))
         .header("Accept", "application/json, text/javascript, */*; q=0.01")
         .header("Content-Type", "application/json")
         .body(payload)
@@ -240,6 +243,7 @@ async fn cgi_get_cell(base_addr: &str, header_map: &HeaderMap) -> Result<serde_j
         .default_headers(header_map.clone())
         .build()?
         .get(&url)
+        .timeout(Duration::from_millis(REQUEST_TIMEOUT_MS))
         .header("Accept", "application/json, text/javascript, */*; q=0.01")
         .header("Content-Type", "application/json")
         .body(payload)
@@ -254,6 +258,7 @@ async fn devpub_get_cell(base_addr: &str) -> Result<String> {
     let url = format!("http://{}:7353/api/v1/celldata/connected/all", base_addr);
     let resp = reqwest::Client::new()
         .get(&url)
+        .timeout(Duration::from_millis(REQUEST_TIMEOUT_MS))
         .header("Accept", "application/json, text/javascript, */*; q=0.01")
         .send()
         .await?;
@@ -608,7 +613,10 @@ mod tests {
         let cell_data = serde_json::from_str::<Vec<CellData>>(DUMMY_DEVICEPUBLISHER_RESPONSE)?;
         let cell_info = CellInfo::from_devpub_celldata(cell_data)?;
         assert_eq!(cell_info.cells.first().unwrap().cell_id, 10);
-        assert_eq!(cell_info.cells.first().unwrap().cell_type, CellularType::LTE);
+        assert_eq!(
+            cell_info.cells.first().unwrap().cell_type,
+            CellularType::LTE
+        );
         assert_eq!(cell_info.cells.first().unwrap().rssi, -89.0);
         assert_eq!(cell_info.cells.first().unwrap().rsrp, -120.0);
         assert_eq!(cell_info.cells.first().unwrap().rsrq, -13.0);
