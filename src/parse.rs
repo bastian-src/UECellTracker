@@ -4,6 +4,8 @@ use clap::{Args, Command, CommandFactory, Parser, ValueEnum};
 use serde::{Deserialize, Serialize};
 use std::{default, error::Error, path::PathBuf};
 
+use crate::{logic::traffic_patterns::RntiMatchingTrafficPatternType, util::print_debug};
+
 #[derive(Debug, Clone, PartialEq, Parser, Serialize, Deserialize)]
 #[command(author, version, about, long_about = None, next_line_help = true)]
 #[command(propagate_version = true)]
@@ -22,6 +24,9 @@ pub struct Arguments {
 
     #[command(flatten)]
     pub ngscope: Option<NgScopeArgs>,
+
+    #[command(flatten)]
+    pub rntimatching: Option<RntiMatchingArgs>,
 
     /// Print additional information in the terminal
     #[arg(short('v'), long, required = false)]
@@ -73,6 +78,7 @@ pub struct DevicePublisherArgs {
 }
 
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub struct FlattenedDevicePublisherArgs {
     pub devpub_address: String,
     pub devpub_auth: String,
@@ -84,7 +90,7 @@ pub struct NgScopeArgs {
     #[arg(long, required = false)]
     pub ng_path: Option<String>,
 
-    /// Address of the UE Cell Tracker port to communicate with NG-Scope (addr:port)
+    /// Local UE Cell Tracker address to communicate with NG-Scope (addr:port)
     #[arg(long, required = false)]
     pub ng_local_addr: Option<String>,
 
@@ -92,9 +98,13 @@ pub struct NgScopeArgs {
     #[arg(long, required = false)]
     pub ng_server_addr: Option<String>,
 
-    /// Filepath for stdout + stderr logging of the NG-Scope process 
+    /// Filepath for stdout + stderr logging of the NG-Scope process
     #[arg(long, required = false)]
     pub ng_log_file: Option<String>,
+
+    /// If true, UE Cell Tracker starts its own NG-Scope instance
+    #[arg(long, required = false)]
+    pub ng_start_process: Option<bool>,
 }
 
 #[derive(Clone, Debug)]
@@ -103,6 +113,29 @@ pub struct FlattenedNgScopeArgs {
     pub ng_local_addr: String,
     pub ng_server_addr: String,
     pub ng_log_file: Option<String>,
+    pub ng_start_process: bool,
+}
+
+#[derive(Args, Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RntiMatchingArgs {
+    /// Local UE Cell Tracker address to generate RNTI matching traffic (addr:port)
+    #[arg(long, required = false)]
+    pub matching_local_addr: Option<String>,
+
+    /// Define which traffic pattern to use to fetch cell data
+    #[arg(long, value_enum, required = false)]
+    pub matching_traffic_pattern: Option<RntiMatchingTrafficPatternType>,
+
+    /// The destination address which the traffic pattern is sent to
+    #[arg(long, required = false)]
+    pub matching_traffic_destination: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct FlattenedRntiMatchingArgs {
+    pub matching_local_addr: String,
+    pub matching_traffic_pattern: RntiMatchingTrafficPatternType,
+    pub matching_traffic_destination: String,
 }
 
 impl default::Default for Arguments {
@@ -121,9 +154,15 @@ impl default::Default for Arguments {
             }),
             ngscope: Some(NgScopeArgs {
                 ng_path: Some("/dev_ws/dependencies/ng-scope/build_x86/ngscope/src/".to_string()),
-                ng_local_addr: Some("0.0.0.0:8888".to_string()),
+                ng_local_addr: Some("0.0.0.0:9191".to_string()),
                 ng_server_addr: Some("0.0.0.0:6767".to_string()),
                 ng_log_file: Some("./.ng_scope_log.txt".to_string()),
+                ng_start_process: Some(true),
+            }),
+            rntimatching: Some(RntiMatchingArgs {
+                matching_local_addr: Some("0.0.0.0:9292".to_string()),
+                matching_traffic_pattern: Some(RntiMatchingTrafficPatternType::A),
+                matching_traffic_destination: Some("1.1.1.1:53".to_string()),
             }),
         }
     }
@@ -138,8 +177,7 @@ impl Arguments {
         let parsed_args = Arguments::parse();
         match parsed_args.clone().get_config_file(app_name) {
             Ok(parsed_config_args) => {
-                let printed_args = parsed_config_args
-                    .print_config_file(app_name)?;
+                let printed_args = parsed_config_args.print_config_file(app_name)?;
                 Ok(printed_args)
             }
             Err(_) => {
@@ -160,6 +198,7 @@ impl Arguments {
         self.milesight = self.milesight.or(config_file.milesight);
         self.devicepublisher = self.devicepublisher.or(config_file.devicepublisher);
         self.ngscope = self.ngscope.or(config_file.ngscope);
+        self.rntimatching = self.rntimatching.or(config_file.rntimatching);
         self.verbose = self.verbose.or(config_file.verbose);
 
         Ok(self)
@@ -176,10 +215,13 @@ impl Arguments {
     fn print_config_file(self, app_name: &str) -> Result<Self, Box<dyn Error>> {
         if self.verbose.unwrap_or(true) {
             let file_path: PathBuf = confy::get_configuration_file_path(app_name, None)?;
-            println!("Configuration file: '{}'", file_path.display());
+            print_debug(&format!(
+                "DEBUG [parse] Configuration file: '{}'",
+                file_path.display()
+            ));
 
             let yaml: String = serde_yaml::to_string(&self)?;
-            println!("\t{}", yaml.replace('\n', "\n\t"));
+            print_debug(&format!("\t{}", yaml.replace('\n', "\n\t")));
         }
 
         Ok(self)
@@ -216,7 +258,18 @@ impl FlattenedNgScopeArgs {
             ng_path: ng_args.ng_path.unwrap(),
             ng_local_addr: ng_args.ng_local_addr.unwrap(),
             ng_server_addr: ng_args.ng_server_addr.unwrap(),
+            ng_start_process: ng_args.ng_start_process.unwrap(),
             ng_log_file: ng_args.ng_log_file,
+        })
+    }
+}
+
+impl FlattenedRntiMatchingArgs {
+    pub fn from_unflattened(rnti_args: RntiMatchingArgs) -> Result<FlattenedRntiMatchingArgs> {
+        Ok(FlattenedRntiMatchingArgs {
+            matching_local_addr: rnti_args.matching_local_addr.unwrap(),
+            matching_traffic_pattern: rnti_args.matching_traffic_pattern.unwrap(),
+            matching_traffic_destination: rnti_args.matching_traffic_destination.unwrap(),
         })
     }
 }

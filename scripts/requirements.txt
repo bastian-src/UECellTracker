@@ -1,2 +1,8 @@
 flask
 marshmallow
+matplotlib
+jsonlines
+seaborn
+json
+linecache
+pandas
