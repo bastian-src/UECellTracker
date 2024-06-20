@@ -15,6 +15,7 @@ mod logic;
 mod ngscope;
 mod parse;
 mod util;
+mod math_util;
 
 use logic::cell_sink::{deploy_cell_sink, CellSinkArgs};
 use logic::cell_source::{deploy_cell_source, CellSourceArgs};

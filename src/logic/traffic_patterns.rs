@@ -1,16 +1,17 @@
 use std::collections::VecDeque;
+use anyhow::Result;
 
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 
-use crate::util::{calculate_mean_variance, calculate_median, standardize_feature_vec};
+use crate::math_util::{calculate_mean_variance, calculate_median, standardize_feature_vec};
 
 #[derive(
     Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug, Serialize, Deserialize, Default,
 )]
 pub enum RntiMatchingTrafficPatternType {
     #[default]
-    A, /* t: 24 sec, 1KB packets, 1ms interval => ? Mbit/s */
+    A, /* t: 24 sec,  1KB packets,  1ms interval =>    ?  Mbit/s */
     B, /* t: 24 sec,  2KB packets,  5ms interval =>    ?  Mbit/s */
     C, /* t: 24 sec,  4KB packets,  5ms interval =>    ?  Mbit/s */
     D, /* t: 24 sec,  8KB packets,  5ms interval => ~ 5.8 Mbit/s */
@@ -103,14 +104,14 @@ impl RntiMatchingTrafficPatternType {
 
 
 impl TrafficPatternFeatures {
-    pub fn from_traffic_pattern(pattern: &TrafficPattern) -> TrafficPatternFeatures {
-        TrafficPatternFeatures {
+    pub fn from_traffic_pattern(pattern: &TrafficPattern) -> Result<TrafficPatternFeatures> {
+        Ok(TrafficPatternFeatures {
             pattern_type: pattern.pattern_type,
             std_vec: pattern.std_vec.clone(),
-            std_feature_vec: pattern.generate_standardized_feature_vec(),
+            std_feature_vec: pattern.generate_standardized_feature_vec()?,
             total_ul_bytes: pattern.total_ul_bytes(),
             nof_packets: pattern.nof_packets(),
-        }
+        })
     }
 }
 
@@ -142,7 +143,7 @@ impl TrafficPattern {
      * DCI timestamp delta mean
      * DCI timestamp delta variance
      * */
-    pub fn generate_standardized_feature_vec(&self) -> Vec<f64> {
+    pub fn generate_standardized_feature_vec(&self) -> Result<Vec<f64>> {
         let packet_sizes: Vec<f64> = self.messages
             .iter()
             .map(|t| t.payload.len() as f64)
@@ -152,10 +153,10 @@ impl TrafficPattern {
             .map(|m| m.time_ms as f64)
             .collect::<Vec<f64>>();
 
-        let (ul_mean, ul_variance) = calculate_mean_variance(&packet_sizes);
-        let ul_median = calculate_median(&packet_sizes);
-        let (tx_mean, tx_variance) = calculate_mean_variance(&time_deltas);
-        let tx_median = calculate_median(&time_deltas);
+        let (ul_mean, ul_variance) = calculate_mean_variance(&packet_sizes)?;
+        let ul_median = calculate_median(&packet_sizes)?;
+        let (tx_mean, tx_variance) = calculate_mean_variance(&time_deltas)?;
+        let tx_median = calculate_median(&time_deltas)?;
 
         let non_std_feature_vec: Vec<f64> = vec![
             packet_sizes.len() as f64,
@@ -168,7 +169,7 @@ impl TrafficPattern {
             tx_variance,
         ];
 
-        standardize_feature_vec(&non_std_feature_vec, &self.std_vec)
+        Ok(standardize_feature_vec(&non_std_feature_vec, &self.std_vec))
     }
 }
 

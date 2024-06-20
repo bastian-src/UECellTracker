@@ -184,6 +184,8 @@ impl RntiMatcherState {
 #[derive(Clone, Debug, PartialEq)]
 pub enum RntiMatchingErrorType {
     ExceededDciTimestampDelta,
+    ErrorGeneratingTrafficPatternFeatures,
+    ErrorFindingBestMatchingRnti,
 }
 
 impl WorkerState for RntiMatcherState {
@@ -250,7 +252,7 @@ pub struct MessageCellInfo {
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct MessageRnti {
     /* cell_id -> ue_rnti */
-    cell_rnti: HashMap<u64, (u16, f64)>,
+    cell_rnti: HashMap<u64, u16>,
 }
 
 /*  --------------  */
