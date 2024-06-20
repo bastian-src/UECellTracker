@@ -124,7 +124,7 @@ pub struct RntiMatchingArgs {
 
     /// Define which traffic pattern to use to fetch cell data
     #[arg(long, value_enum, required = false)]
-    pub matching_traffic_pattern: Option<RntiMatchingTrafficPatternType>,
+    pub matching_traffic_pattern: Option<Vec<RntiMatchingTrafficPatternType>>,
 
     /// The destination address which the traffic pattern is sent to
     #[arg(long, required = false)]
@@ -134,7 +134,7 @@ pub struct RntiMatchingArgs {
 #[derive(Clone, Debug)]
 pub struct FlattenedRntiMatchingArgs {
     pub matching_local_addr: String,
-    pub matching_traffic_pattern: RntiMatchingTrafficPatternType,
+    pub matching_traffic_pattern: Vec<RntiMatchingTrafficPatternType>,
     pub matching_traffic_destination: String,
 }
 
@@ -161,7 +161,7 @@ impl default::Default for Arguments {
             }),
             rntimatching: Some(RntiMatchingArgs {
                 matching_local_addr: Some("0.0.0.0:9292".to_string()),
-                matching_traffic_pattern: Some(RntiMatchingTrafficPatternType::A),
+                matching_traffic_pattern: Some(vec![RntiMatchingTrafficPatternType::A]),
                 matching_traffic_destination: Some("1.1.1.1:53".to_string()),
             }),
         }

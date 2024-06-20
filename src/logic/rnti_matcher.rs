@@ -36,8 +36,6 @@ pub const MATCHING_MAX_DCI_TIMESTAMP_DELTA_MS: u64 = 100;
 pub const MATCHING_UL_BYTES_LOWER_BOUND_FACTOR: f64 = 0.5;
 pub const MATCHING_UL_BYTES_UPPER_BOUND_FACTOR: f64 = 4.0;
 pub const TIME_MS_TO_US_FACTOR: u64 = 1000;
-pub const MATCHING_LOG_FILE_PREFIX: &str = "./.logs/rnti_matching_pattern_";
-pub const MATCHING_LOG_FILE_SUFFIX: &str = ".jsonl";
 pub const COLLECT_DCI_MAX_TIMESTAMP_DELTA_US: u64 = 50000;
 
 pub const BASIC_FILTER_MAX_TOTAL_UL_FACTOR: f64 = 100.0;
@@ -197,11 +195,11 @@ fn run(run_args: &mut RunArgs) -> Result<()> {
 
     let mut cell_rnti_ring_buffer: CellRntiRingBuffer = CellRntiRingBuffer::new(RNTI_RING_BUFFER_SIZE);
     let traffic_destination = matching_args.matching_traffic_destination;
-    let traffic_pattern = matching_args.matching_traffic_pattern.generate_pattern();
-    let matching_log_file_path = &format!(
-        "{}{:?}{}",
-        MATCHING_LOG_FILE_PREFIX, matching_args.matching_traffic_pattern, MATCHING_LOG_FILE_SUFFIX
-    );
+    let traffic_pattern_list: Vec<TrafficPattern> = matching_args.matching_traffic_pattern
+        .iter()
+        .map(|pattern_type| pattern_type.generate_pattern())
+        .collect();
+    let mut traffic_pattern_index = 0;
     let mut matcher_state: RntiMatcherState = RntiMatcherState::Idle;
 
     loop {
@@ -226,7 +224,8 @@ fn run(run_args: &mut RunArgs) -> Result<()> {
             RntiMatcherState::StartMatching => handle_start_matching(
                 &tx_gen_thread,
                 &traffic_destination,
-                traffic_pattern.clone(),
+                &traffic_pattern_list,
+                &mut traffic_pattern_index,
             ),
             RntiMatcherState::MatchingCollectDci(traffic_collection) => {
                 // TODO: Use all dcis here and let this thread sleep again!
@@ -234,7 +233,6 @@ fn run(run_args: &mut RunArgs) -> Result<()> {
             }
             RntiMatcherState::MatchingProcessDci(traffic_collection) => {
                 handle_process_dci(*traffic_collection,
-                                   matching_log_file_path,
                                    &mut cell_rnti_ring_buffer)
             }
             RntiMatcherState::MatchingPublishRnti(rnti) => {
@@ -274,8 +272,12 @@ fn collect_dcis(rx_dci: &mut BusReader<MessageDci>) -> Vec<MessageDci> {
 fn handle_start_matching(
     tx_gen_thread: &SyncSender<LocalGeneratorState>,
     traffic_destination: &str,
-    traffic_pattern: TrafficPattern,
+    traffic_pattern_list: &[TrafficPattern],
+    traffic_pattern_index: &mut usize,
 ) -> RntiMatcherState {
+    let traffic_pattern =  traffic_pattern_list[*traffic_pattern_index].clone();
+    *traffic_pattern_index = (*traffic_pattern_index + 1) % traffic_pattern_list.len();
+
     let pattern_total_ms = traffic_pattern.total_time_ms();
     let start_timestamp_ms = chrono::Utc::now().timestamp_millis() as u64;
     let finish_timestamp_ms = start_timestamp_ms
@@ -323,14 +325,13 @@ fn handle_collect_dci(
 
 fn handle_process_dci(
     mut traffic_collection: TrafficCollection,
-    log_file_path: &str,
     cell_rnti_ring_buffer: &mut CellRntiRingBuffer,
 ) -> RntiMatcherState {
     // Check number of packets plausability: expected ms -> expected dcis
     let mut message_rnti: MessageRnti = MessageRnti::default();
 
     /* log files */
-    let _ = log_rnti_matching_traffic(log_file_path, &traffic_collection);
+    let _ = log_rnti_matching_traffic(&traffic_collection);
 
     traffic_collection.apply_basic_filter();
 
