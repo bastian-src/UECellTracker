@@ -20,10 +20,15 @@ use crate::ngscope::types::NgScopeCellDci;
 use crate::parse::{Arguments, FlattenedRntiMatchingArgs};
 
 use crate::util::{
-    calculate_mean_variance, calculate_median, calculate_weighted_euclidean_distance,
-    log_rnti_matching_traffic, print_debug, print_info, standardize_feature_vec,
-    determine_process_id, calculate_weighted_euclidean_distance_matrix,
+    CellRntiRingBuffer,
+    log_rnti_matching_traffic, print_debug, print_info, determine_process_id,
 };
+
+use crate::math_util::{
+    calculate_mean_variance, calculate_median, calculate_weighted_euclidean_distance,
+    calculate_weighted_euclidean_distance_matrix, standardize_feature_vec,
+};
+
 
 pub const MATCHING_INTERVAL_MS: u64 = 1000;
 pub const MATCHING_TRAFFIC_PATTERN_TIME_OVERLAP_FACTOR: f64 = 1.1;
@@ -40,39 +45,53 @@ pub const BASIC_FILTER_MIN_TOTAL_UL_FACTOR: f64 = 0.005;
 pub const BASIC_FILTER_MAX_UL_PER_DCI: u64 = 5_000_000;
 pub const BASIC_FILTER_MIN_OCCURENCES_FACTOR: f64 = 0.005;
 
-    /*
-     * Feature vector, order matters:
-     *
-     * DCI count (occurences)
-     * Total UL bytes
-     * UL bytes median
-     * UL bytes mean
-     * UL bytes variance
-     * DCI timestamp delta median
-     * DCI timestamp delta mean
-     * DCI timestamp delta variance
-     * */
-/* not as good as all-weighted one */
+pub const RNTI_RING_BUFFER_SIZE: usize = 5;
+
+
+/*
+ * Feature vector, order matters:
+ *
+ * DCI count (occurences)
+ * Total UL bytes
+ * UL bytes median
+ * UL bytes mean
+ * UL bytes variance
+ * DCI timestamp delta median
+ * DCI timestamp delta mean
+ * DCI timestamp delta variance
+ * */
 // pub const MATCHING_WEIGHTINGS: [f64; 8] = [
 //     0.5,    /* DCI count (occurences) */
-//     0.0,    /* Total UL bytes */
-//     0.5,    /* UL bytes median */
-//     0.0,    /* UL bytes mean */
-//     0.0,    /* UL bytes variance */
-//     0.0,    /* DCI time delta median */
-//     0.0,    /* DCI time delta mean */
-//     0.0,    /* DCI time delta variance */
+//     0.1,    /* Total UL bytes */
+//     0.15,    /* UL bytes median */
+//     0.025,  /* UL bytes mean */
+//     0.025,  /* UL bytes variance */
+//     0.15,    /* DCI time delta median */
+//     0.025,  /* DCI time delta mean */
+//     0.025,  /* DCI time delta variance */
+// ];
+
+/* on D, not so nice */
+// pub const MATCHING_WEIGHTINGS: [f64; 8] = [
+//     0.3,    /* DCI count (occurences) */
+//     0.3,    /* Total UL bytes */
+//     0.1,    /* UL bytes median */
+//     0.2,  /* UL bytes mean */
+//     0.025,  /* UL bytes variance */
+//     0.025,    /* DCI time delta median */
+//     0.025,  /* DCI time delta mean */
+//     0.025,  /* DCI time delta variance */
 // ];
 
 pub const MATCHING_WEIGHTINGS: [f64; 8] = [
     0.5,    /* DCI count (occurences) */
-    0.1,    /* Total UL bytes */
-    0.15,    /* UL bytes median */
-    0.025,  /* UL bytes mean */
-    0.025,  /* UL bytes variance */
-    0.15,    /* DCI time delta median */
-    0.025,  /* DCI time delta mean */
-    0.025,  /* DCI time delta variance */
+    0.3,    /* Total UL bytes */
+    0.1,    /* UL bytes median */
+    0.020,  /* UL bytes mean */
+    0.020,  /* UL bytes variance */
+    0.020,    /* DCI time delta median */
+    0.020,  /* DCI time delta mean */
+    0.020,  /* DCI time delta variance */
 ];
 
 #[derive(Clone, Debug, PartialEq)]
@@ -176,6 +195,7 @@ fn run(run_args: &mut RunArgs) -> Result<()> {
     )?);
     run_args.tx_gen_thread_handle = Some(tx_gen_thread.clone());
 
+    let mut cell_rnti_ring_buffer: CellRntiRingBuffer = CellRntiRingBuffer::new(RNTI_RING_BUFFER_SIZE);
     let traffic_destination = matching_args.matching_traffic_destination;
     let traffic_pattern = matching_args.matching_traffic_pattern.generate_pattern();
     let matching_log_file_path = &format!(
@@ -213,7 +233,9 @@ fn run(run_args: &mut RunArgs) -> Result<()> {
                 handle_collect_dci(latest_dcis, *traffic_collection)
             }
             RntiMatcherState::MatchingProcessDci(traffic_collection) => {
-                handle_process_dci(*traffic_collection, matching_log_file_path)
+                handle_process_dci(*traffic_collection,
+                                   matching_log_file_path,
+                                   &mut cell_rnti_ring_buffer)
             }
             RntiMatcherState::MatchingPublishRnti(rnti) => {
                 tx_rnti.broadcast(rnti);
@@ -222,7 +244,10 @@ fn run(run_args: &mut RunArgs) -> Result<()> {
                     Box::new(RntiMatcherState::StartMatching),
                 )
             }
-            RntiMatcherState::MatchingError(error_type) => handle_matching_error(error_type),
+            RntiMatcherState::MatchingError(error_type) => handle_matching_error(
+                error_type,
+                &tx_gen_thread,
+                ),
             RntiMatcherState::SleepMs(time_ms, next_state) => {
                 thread::sleep(Duration::from_millis(time_ms));
                 *next_state
@@ -255,12 +280,18 @@ fn handle_start_matching(
     let start_timestamp_ms = chrono::Utc::now().timestamp_millis() as u64;
     let finish_timestamp_ms = start_timestamp_ms
             + (MATCHING_TRAFFIC_PATTERN_TIME_OVERLAP_FACTOR * pattern_total_ms as f64) as u64;
+    let traffic_pattern_features = match TrafficPatternFeatures::from_traffic_pattern(&traffic_pattern) {
+        Ok(features) => features,
+        Err(_) => {
+            return RntiMatcherState::MatchingError(RntiMatchingErrorType::ErrorGeneratingTrafficPatternFeatures);
+        }
+    };
 
     let traffic_collection: TrafficCollection = TrafficCollection {
         cell_traffic: Default::default(),
         start_timestamp_ms,
         finish_timestamp_ms,
-        traffic_pattern_features: TrafficPatternFeatures::from_traffic_pattern(&traffic_pattern)
+        traffic_pattern_features,
     };
 
     let _ = tx_gen_thread.send(LocalGeneratorState::SendPattern(
@@ -293,6 +324,7 @@ fn handle_collect_dci(
 fn handle_process_dci(
     mut traffic_collection: TrafficCollection,
     log_file_path: &str,
+    cell_rnti_ring_buffer: &mut CellRntiRingBuffer,
 ) -> RntiMatcherState {
     // Check number of packets plausability: expected ms -> expected dcis
     let mut message_rnti: MessageRnti = MessageRnti::default();
@@ -302,15 +334,36 @@ fn handle_process_dci(
 
     traffic_collection.apply_basic_filter();
 
-    message_rnti.cell_rnti = traffic_collection.find_best_matching_rnti();
+    let best_matches = match traffic_collection.find_best_matching_rnti() {
+        Ok(matches) => matches,
+        Err(e) => {
+            print_info(&format!("[rntimatcher] Error during handle_process_dci: {:?}", e));
+            return RntiMatcherState::MatchingError(RntiMatchingErrorType::ErrorFindingBestMatchingRnti)
+        }
+    };
+    cell_rnti_ring_buffer.update(&best_matches);
+    print_debug(&format!("DEBUG [rntimatcher] cell_rnti_ring_buffer: {:#?}", cell_rnti_ring_buffer));
+    message_rnti.cell_rnti = cell_rnti_ring_buffer.most_frequent();
     RntiMatcherState::MatchingPublishRnti(message_rnti)
 }
 
-fn handle_matching_error(error_type: RntiMatchingErrorType) -> RntiMatcherState {
-    print_info(&format!(
-        "[rntimatcher] error during RNTI matching: {:?}\n  -> stopping pattern",
-        error_type
-    ));
+fn handle_matching_error(
+    error_type: RntiMatchingErrorType,
+    tx_gen_thread: &SyncSender<LocalGeneratorState>,
+) -> RntiMatcherState {
+
+    match error_type {
+        RntiMatchingErrorType::ExceededDciTimestampDelta => {},
+        RntiMatchingErrorType::ErrorGeneratingTrafficPatternFeatures |
+        RntiMatchingErrorType::ErrorFindingBestMatchingRnti => {
+            print_info(&format!(
+                "[rntimatcher] error during RNTI matching: {:?}\n  -> going back to Idle",
+                error_type
+            ));
+            let _ = tx_gen_thread.send(LocalGeneratorState::Idle);
+        }
+    }
+
     RntiMatcherState::SleepMs(
         MATCHING_INTERVAL_MS,
         Box::new(RntiMatcherState::StartMatching),
@@ -352,20 +405,32 @@ fn run_traffic_generator(
     ));
 
     loop {
-        if let Some(new_state) = check_rx_state(&rx_local_gen_state)? {
-            gen_state = new_state;
+        match check_rx_state(&rx_local_gen_state) {
+            Ok(Some(new_state)) => gen_state = new_state,
+            Ok(None) => {},
+            Err(e) => {
+                print_info(&format!("{}", e));
+                break;
+            }
         }
 
         match gen_state {
             LocalGeneratorState::Idle => {
-                /* Idle here, because it shall not interfere the sendpattern */
+                /* Sleep here, because it shall not interfere the sendpattern */
                 thread::sleep(Duration::from_millis(DEFAULT_WORKER_SLEEP_MS));
             }
             LocalGeneratorState::Stop => {
                 break;
             }
-            LocalGeneratorState::SendPattern(destination, pattern) => {
-                gen_state = gen_handle_send_pattern(&socket, &destination, *pattern.clone());
+            LocalGeneratorState::SendPattern(ref destination, ref mut pattern) => {
+                match gen_handle_send_pattern(&socket, destination, pattern) {
+                    Ok(Some(_)) => { /* stay in the state and keep sending */ },
+                    Ok(None) => gen_state = LocalGeneratorState::PatternSent,
+                    Err(e) => {
+                        print_info(&format!("[rntimatcher.gen] Error occured while sendig the pattern: {:?}", e));
+                        gen_state = LocalGeneratorState::Stop;
+                    }
+                }
             }
             LocalGeneratorState::PatternSent => {
                 print_info("[rntimatcher.gen] Finished sending pattern!");
@@ -401,15 +466,15 @@ fn check_rx_state(
 fn gen_handle_send_pattern(
     socket: &UdpSocket,
     destination: &str,
-    mut pattern: TrafficPattern,
-) -> LocalGeneratorState {
+    pattern: &mut TrafficPattern,
+) -> Result<Option<()>> {
     match pattern.messages.pop_front() {
         Some(msg) => {
             thread::sleep(Duration::from_millis(msg.time_ms as u64));
-            let _ = socket.send_to(&msg.payload, destination);
-            LocalGeneratorState::SendPattern(destination.to_string(), Box::new(pattern))
+            socket.send_to(&msg.payload, destination)?;
+            Ok(Some(()))
         }
-        None => LocalGeneratorState::PatternSent,
+        None => Ok(None)
     }
 }
 
@@ -536,11 +601,12 @@ impl TrafficCollection {
                     })
                     /* ZERO MEDIAN */
                     .filter(|(_, ue_traffic)| {
-                        if ue_traffic.feature_ul_bytes_median_mean_variance().0 < 0.0 {
-                            stats.zero_ul_median += 1;
-                            false
-                        } else {
-                            true
+                        match ue_traffic.feature_ul_bytes_median_mean_variance() {
+                            Ok((median, _, _)) if median <= 0.0 => true,
+                            _ => {
+                                stats.zero_ul_median += 1;
+                                false
+                            }
                         }
                     })
                     .map(|(&rnti, _)| rnti)
@@ -570,7 +636,7 @@ impl TrafficCollection {
      * cell_id -> { (rnti, distance ) }
      *
      * */
-    pub fn find_best_matching_rnti(&self) -> HashMap<u64, (u16, f64)> {
+    pub fn find_best_matching_rnti(&self) -> Result<HashMap<u64, u16>> {
         let pattern_std_vec = &self.traffic_pattern_features.std_vec;
         let pattern_feature_vec = &self.traffic_pattern_features.std_feature_vec;
         /* Change this to use the functional approach */
@@ -592,10 +658,10 @@ impl UeTraffic {
      * DCI timestamp delta mean
      * DCI timestamp delta variance
      * */
-    pub fn generate_standardized_feature_vec(&self, std_vec: &[(f64, f64)]) -> Vec<f64> {
+    pub fn generate_standardized_feature_vec(&self, std_vec: &[(f64, f64)]) -> Result<Vec<f64>> {
         let mut non_std_feature_vec = vec![];
-        let (ul_median, ul_mean, ul_variance) = self.feature_ul_bytes_median_mean_variance();
-        let (tx_median, tx_mean, tx_variance) = self.feature_dci_time_delta_median_mean_variance();
+        let (ul_median, ul_mean, ul_variance) = self.feature_ul_bytes_median_mean_variance()?;
+        let (tx_median, tx_mean, tx_variance) = self.feature_dci_time_delta_median_mean_variance()?;
 
         non_std_feature_vec.push(self.feature_dci_count());
         non_std_feature_vec.push(self.feature_total_ul_bytes());
@@ -606,7 +672,7 @@ impl UeTraffic {
         non_std_feature_vec.push(tx_mean);
         non_std_feature_vec.push(tx_variance);
 
-        standardize_feature_vec(&non_std_feature_vec, std_vec)
+        Ok(standardize_feature_vec(&non_std_feature_vec, std_vec))
     }
 
     pub fn feature_total_ul_bytes(&self) -> f64 {
@@ -617,7 +683,7 @@ impl UeTraffic {
         self.traffic.len() as f64
     }
 
-    pub fn feature_dci_time_delta_median_mean_variance(&self) -> (f64, f64, f64) {
+    pub fn feature_dci_time_delta_median_mean_variance(&self) -> Result<(f64, f64, f64)> {
         let mut sorted_timestamps: Vec<u64> = self.traffic.keys().cloned().collect();
         sorted_timestamps.sort_by(|a, b| a.partial_cmp(b).unwrap());
         let timestamp_deltas: Vec<f64> = sorted_timestamps
@@ -625,22 +691,22 @@ impl UeTraffic {
             .map(|window| (window[1] - window[0]) as f64)
             .collect();
 
-        let (mean, variance) = calculate_mean_variance(&timestamp_deltas);
-        let median = calculate_median(&timestamp_deltas);
+        let (mean, variance) = calculate_mean_variance(&timestamp_deltas)?;
+        let median = calculate_median(&timestamp_deltas)?;
 
-        (median, mean, variance)
+        Ok((median, mean, variance))
     }
 
-    pub fn feature_ul_bytes_median_mean_variance(&self) -> (f64, f64, f64) {
+    pub fn feature_ul_bytes_median_mean_variance(&self) -> Result<(f64, f64, f64)> {
         let ul_bytes: Vec<f64> = self
             .traffic
             .values()
             .map(|ul_dl_traffic| ul_dl_traffic.ul_bytes as f64)
             .collect();
-        let (mean, variance) = calculate_mean_variance(&ul_bytes);
-        let median = calculate_median(&ul_bytes);
+        let (mean, variance) = calculate_mean_variance(&ul_bytes)?;
+        let median = calculate_median(&ul_bytes)?;
 
-        (median, mean, variance)
+        Ok((median, mean, variance))
     }
 }
 
@@ -657,53 +723,63 @@ fn feature_distance_functional(
     traffic: &HashMap<u64, CellTrafficCollection>,
     pattern_std_vec: &[(f64, f64)],
     pattern_feature_vec: &[f64]
-) -> HashMap<u64, (u16, f64)> {
+) -> Result<HashMap<u64, u16>> {
     traffic.iter()
         .map(|(&cell_id, cell_traffic)| {
-            let mut rnti_and_distance: Vec<(u16, f64)> = cell_traffic.traffic
+            let rnti_and_distance: Result<Vec<(u16, f64)>> = cell_traffic.traffic
                 .iter()
                 .map(|(&rnti, ue_traffic)| {
-                    (
-                        rnti,
-                        calculate_weighted_euclidean_distance(
+                    let std_feature_vec = ue_traffic.generate_standardized_feature_vec(pattern_std_vec)?;
+                    let distance = calculate_weighted_euclidean_distance(
                             pattern_feature_vec,
-                            &ue_traffic.generate_standardized_feature_vec(pattern_std_vec),
+                            &std_feature_vec,
                             &MATCHING_WEIGHTINGS,
-                        ),
-                    )
+                        );
+                    Ok((rnti, distance))
                 })
-                .collect();
+                .collect::<Result<Vec<(u16, f64)>>>();
+            let mut rnti_and_distance = rnti_and_distance?;
             rnti_and_distance.sort_by(|a, b| a.1.abs().partial_cmp(&b.1.abs()).unwrap());
-            (cell_id, *rnti_and_distance.first().unwrap())
+            Ok((cell_id, rnti_and_distance.first().unwrap().0))
         })
-        .collect()
+        .collect::<Result<HashMap<u64, u16>>>()
 }
 
 fn feature_distance_matrices(
     traffic: &HashMap<u64, CellTrafficCollection>,
     pattern_std_vec: &[(f64, f64)],
     pattern_feature_vec: &[f64]
-) -> HashMap<u64, (u16, f64)> {
+) -> Result<HashMap<u64, u16>> {
     let num_features = pattern_std_vec.len();
     let weightings_vector = DVector::from_row_slice(&MATCHING_WEIGHTINGS);
+
     traffic.iter()
         .map(|(&cell_id, cell_traffic)| {
-            let standardized_feature_vecs: Vec<Vec<f64>> = cell_traffic.traffic
+            let standardized_feature_vecs: Result<Vec<Vec<f64>>> = cell_traffic.traffic
                 .values()
                 .map(|ue_traffic| {
                     ue_traffic.generate_standardized_feature_vec(pattern_std_vec)
+                        .map_err(|e| anyhow!(e))
                 })
                 .collect();
 
+            let standardized_feature_vecs = standardized_feature_vecs?;
             let num_vectors = standardized_feature_vecs.len();
 
             let data: Vec<f64> = standardized_feature_vecs.into_iter().flatten().collect();
             let feature_matrix: DMatrix<f64> = DMatrix::from_row_slice(num_vectors, num_features, &data);
+            
+            // Uncomment and implement debug print if needed
+            // print_debug(&format!("DEBUG [rntimatcher] feature_matrix: {:.2}", feature_matrix));
+            
             let pattern_feature_matrix = DMatrix::from_fn(num_vectors, num_features, |_, r| pattern_feature_vec[r]);
             let euclidean_distances = calculate_weighted_euclidean_distance_matrix(
                 &pattern_feature_matrix,
                 &feature_matrix,
                 &weightings_vector);
+            
+            // Uncomment and implement debug print if needed
+            // print_debug(&format!("DEBUG [rntimatcher] distances: {:.2}", euclidean_distances));
 
             let mut rnti_and_distance: Vec<(u16, f64)> = cell_traffic.traffic.keys()
                 .cloned()
@@ -712,9 +788,9 @@ fn feature_distance_matrices(
 
             rnti_and_distance.sort_by(|a, b| a.1.abs().partial_cmp(&b.1.abs()).unwrap());
 
-            (cell_id, *rnti_and_distance.first().unwrap())
+            Ok((cell_id, rnti_and_distance.first().unwrap().0))
         })
-        .collect()
+        .collect::<Result<HashMap<u64, u16>>>()
 }
 
 
