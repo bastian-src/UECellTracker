@@ -7,7 +7,9 @@ app = Flask(__name__)
 # Predefined response
 cell_data = [
     {
-        "id": 62,
+        "cid": None,
+        "enodeB": 100344,
+        "pci": 62,
         "type": "LTE",
         "arfcn": 3350,
         "band": "7",
