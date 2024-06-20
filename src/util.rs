@@ -12,6 +12,11 @@ use lazy_static::lazy_static;
 
 use crate::logic::rnti_matcher::TrafficCollection;
 
+
+pub const MATCHING_LOG_FILE_PREFIX: &str = "./.logs/rnti_matching_pattern_";
+pub const MATCHING_LOG_FILE_SUFFIX: &str = ".jsonl";
+
+
 #[derive(Clone, Debug, Default)]
 pub struct RingBuffer<T> {
     buffer: VecDeque<T>,
@@ -164,19 +169,24 @@ impl LogExt for Log {
 }
 
 pub fn log_rnti_matching_traffic(
-    file_path: &str,
     traffic_collection: &TrafficCollection,
 ) -> Result<()> {
+
+    let matching_log_file_path = &format!(
+        "{}{:?}{}",
+        MATCHING_LOG_FILE_PREFIX, traffic_collection.traffic_pattern_features.pattern_type, MATCHING_LOG_FILE_SUFFIX
+    );
+
     print_debug(&format!(
         "DEBUG [rntimatcher] going to write traffic to file: {:?}",
-        file_path
+        matching_log_file_path
     ));
     let json_string = serde_json::to_string(traffic_collection)?;
 
     let mut file: File = OpenOptions::new()
         .create(true)
         .append(true)
-        .open(file_path)?;
+        .open(matching_log_file_path)?;
     writeln!(file, "{}", json_string)?;
 
     Ok(())
