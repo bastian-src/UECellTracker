@@ -48,7 +48,9 @@ pub struct SingleCell {
 #[derive(Debug, Clone, Deserialize)]
 #[allow(non_snake_case, dead_code)]
 pub struct CellData {
-    pub id: u64,
+    pub nodeB: Option<u64>,
+    pub cid: Option<u64>,
+    pub pci: Option<u64>,
     pub r#type: String,
     pub arfcn: u64,
     pub band: String,
@@ -175,6 +177,21 @@ pub fn arfcn_to_frequency(arfcn: u64, cell_type: &CellularType) -> Result<u64> {
             let freq = (f_ref_offs + (delta_f_global * (arfcn - n_ref_offs))) * 1000;
             Ok(freq)
         }
+    }
+}
+
+impl CellData {
+    /// Returns the first non-`None` identifier among `cid`, `pci`, and `nodeB`.
+    /// Returns `0` as fallback if all are `None`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let cell_data = CellData { cid: None, pci: Some(456), nodeB: None };
+    /// assert_eq!(cell_data.safe_id(), 456);
+    /// ```
+    pub fn safe_id(&self) -> u64 {
+        self.cid.or(self.pci).or(self.nodeB).unwrap_or(0)
     }
 }
 
@@ -318,7 +335,7 @@ impl CellInfo {
         let mut cell_info = CellInfo { cells: vec![] };
         for cell in cell_data.iter() {
             let mut single_cell = SingleCell {
-                cell_id: cell.id,
+                cell_id: cell.safe_id(),
                 cell_type: CellularType::from_str(&cell.r#type)?,
                 frequency: 0,
                 rssi: cell.rssi,
@@ -474,7 +491,9 @@ mod tests {
 
     const DUMMY_DEVICEPUBLISHER_RESPONSE: &str = r#"[
     {
-        "id": 10,
+        "nodeB": 20321,
+        "cid": null,
+        "pci": null,
         "type": "LTE",
         "arfcn": 1801,
         "band": "1800",
@@ -612,7 +631,7 @@ mod tests {
     fn test_devpub_from_celldata() -> Result<()> {
         let cell_data = serde_json::from_str::<Vec<CellData>>(DUMMY_DEVICEPUBLISHER_RESPONSE)?;
         let cell_info = CellInfo::from_devpub_celldata(cell_data)?;
-        assert_eq!(cell_info.cells.first().unwrap().cell_id, 10);
+        assert_eq!(cell_info.cells.first().unwrap().cell_id, 20321);
         assert_eq!(
             cell_info.cells.first().unwrap().cell_type,
             CellularType::LTE
