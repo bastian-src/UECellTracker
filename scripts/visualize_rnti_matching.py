@@ -21,13 +21,14 @@ DEFAULT_EXPORT_RECORDING_INDEX = 17
 DEFAULT_RESET_TIMESTAMPS = True
 DEFAULT_FILTER_KEEP_REST = False
 DEFAULT_EXPORT_PATH = './.export/'
+DEFAULT_DIASHOW_KBPS = False
 
 # RNTI Filterting
 DCI_THRESHOLD = 0
 EMPTY_DCI_RATIO_THRESHOLD = 0.99
 SAMPLES_THRESHOLD = 5
 
-MAX_TOTAL_UL_FACTOR = 100.0
+MAX_TOTAL_UL_FACTOR = 200.0
 MIN_TOTAL_UL_FACTOR = 0.005 # x% of the expected UL traffic
 MAX_UL_PER_DCI_THRESHOLD = 5_000_000
 MIN_OCCURENCES_FACTOR = 0.005
@@ -397,8 +398,12 @@ class IndexTracker:
 
     def plot(self):
         self.ax.clear()
-        df_kbps = self.data[self.index].filtered_df.resample('1s').median().mul(8 / 1_000)
-        plot_df(plot_pandas_line, df_kbps, axes=self.ax)
+        df = self.data[self.index].filtered_df
+        print_info(f"Highest DCI count RNTI: {df.count().idxmax()}")
+        if self.settings.kbps:
+            df = df.resample('1s').sum().mul(8).div(1000)
+
+        plot_df(DEFAULT_DIASHOW_PLOT_TYPE_CHOICES[self.settings.plot_type], df, axes=self.ax)
 
     def check_data(self, file_index) -> bool:
         if isinstance(self.data[file_index], FilteredRecording):
@@ -550,7 +555,7 @@ def export(settings):
     filtered_data = filter_dataset(settings, raw_recording)
 
     df = move_column_to_front(filtered_data.filtered_df, '11985')
-    df_kbps = df.resample('1s').median().mul(8 / 1_000)
+    df_kbps = df.resample('1s').sum().mul(8).div(1000)
 
     # Replace the first directory and change the file extension
     os.makedirs(os.path.dirname(export_base_path), exist_ok=True)
@@ -674,6 +679,12 @@ def plot_pandas_hist(ax, df):
     ax.set_ylabel('Frequency')
     # ax.set_title('Histogram of UL Bytes')
 
+DEFAULT_DIASHOW_PLOT_TYPE = 'scatter'
+DEFAULT_DIASHOW_PLOT_TYPE_CHOICES = {
+    'scatter': plot_pandas_scatter,
+    'line': plot_pandas_line,
+    'hist': plot_pandas_hist,
+}
 
 def plot_basic_filtered(settings, recording):
 
@@ -758,6 +769,15 @@ if __name__ == "__main__":
                                 type=bool,
                                 default=DEFAULT_PLOT_FILTERED,
                                 help='Display filtered RNTIs in the plot (default: {DEFAULT_PLOT_FILTERED})')
+    parser_diashow.add_argument('--kbps',
+                                type=bool,
+                                default=DEFAULT_DIASHOW_KBPS,
+                                help='Resample to kbps (default: {DEFAULT_DIASHOW_KBPS})')
+    parser_diashow.add_argument('--plot-type',
+                                type=str,
+                                choices=list(DEFAULT_DIASHOW_PLOT_TYPE_CHOICES.keys()),
+                                default=DEFAULT_DIASHOW_PLOT_TYPE,
+                                help='The type of the plot (default: {DEFAULT_DIASHOW_PLOT_TYPE})')
 
     # standardize subcommand
     parser_standardize = subparsers.add_parser('standardize', help='Run standardize mode')
