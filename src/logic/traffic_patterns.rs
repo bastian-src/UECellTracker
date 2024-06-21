@@ -11,20 +11,20 @@ use crate::math_util::{calculate_mean_variance, calculate_median, standardize_fe
 )]
 pub enum RntiMatchingTrafficPatternType {
     #[default]
-    A, /* t: 24 sec,  1KB packets,  1ms interval =>    ?  Mbit/s */
-    B, /* t: 24 sec,  2KB packets,  5ms interval =>    ?  Mbit/s */
-    C, /* t: 24 sec,  4KB packets,  5ms interval =>    ?  Mbit/s */
-    D, /* t: 24 sec,  8KB packets,  5ms interval => ~ 5.8 Mbit/s */
-    E, /* t: 24 sec, 16KB packets, 10ms interval =>    ?  Mbit/s */
-    F, /* t: 24 sec, 32KB packets, 10ms interval =>    ?  Mbit/s */
-    G,
-    H,
-    I,
-    J,
-    K,
-    L,
-    M,
-    N,
+    A, /* t: 10 sec,  128B packets,  1ms interval =>    ?  Mbit/s */
+    B, /* t: 10 sec,  128B packets,  5ms interval =>    ?  Mbit/s */
+    C, /* t: 10 sec,  128B packets, 10ms interval =>    ?  Mbit/s */
+    D, /* t: 10 sec,  128B packets, 15ms interval => ~ 5.8 Mbit/s */
+    E, /* t: 10 sec,  128B packets, 20ms interval =>    ?  Mbit/s */
+    F, /* t: 10 sec,  128B packets, 40ms interval =>    ?  Mbit/s */
+    G, /* sinus       128B packets,  5ms interval =>    ?  Mbit/s */
+    H, /* t: 10 sec,  256B packets,  1ms interval =>    ?  Mbit/s */
+    I, /* t: 10 sec,  256B packets,  5ms interval =>    ?  Mbit/s */
+    J, /* t: 10 sec,  256B packets, 10ms interval =>    ?  Mbit/s */
+    K, /* t: 10 sec,  256B packets, 15ms interval => ~ 5.8 Mbit/s */
+    L, /* t: 10 sec,  256B packets, 20ms interval =>    ?  Mbit/s */
+    M, /* t: 10 sec,  256B packets, 40ms interval =>    ?  Mbit/s */
+    N, /* t: 10 sec,  256B packets, 40ms interval | 5 sec send, 5 sec nothing */
     O,
     P, /* 5s "small" + 5s "big" */
     Q, /* test "no" traffic */
@@ -189,7 +189,7 @@ fn generate_incremental_pattern(
         };
         messages.push_back(TrafficPatternMessage {
             time_ms: interval_ms,
-            payload: vec![0xA0; 500 + increment],
+            payload: vec![0xA0; increment],
         })
     }
     messages.push_back(TrafficPatternMessage {
@@ -208,7 +208,8 @@ fn generate_incremental_pattern(
 fn pattern_a() -> TrafficPattern {
     TrafficPattern {
         pattern_type: RntiMatchingTrafficPatternType::A,
-        messages: generate_incremental_pattern(1, 10, 20000, 4000),
+        messages: generate_incremental_pattern(1, 7, 10000, 1),
+        /* DUMMY STD_VEC */
         std_vec: vec![
             (4298.972, 655.833),
             (8977880.222, 1309843.824),
@@ -225,7 +226,8 @@ fn pattern_a() -> TrafficPattern {
 fn pattern_b() -> TrafficPattern {
     TrafficPattern {
         pattern_type: RntiMatchingTrafficPatternType::B,
-        messages: generate_incremental_pattern(5, 11, 20000, 4000),
+        messages: generate_incremental_pattern(5, 7, 10000, 1),
+        /* DUMMY STD_VEC */
         std_vec: vec![
             (5112.829, 687.871),
             (35530994.057, 5229654.427),
@@ -242,7 +244,8 @@ fn pattern_b() -> TrafficPattern {
 fn pattern_c() -> TrafficPattern {
     TrafficPattern {
         pattern_type: RntiMatchingTrafficPatternType::C,
-        messages: generate_incremental_pattern(5, 12, 20000, 4000),
+        messages: generate_incremental_pattern(10, 7, 10000, 1),
+        /* DUMMY STD_VEC */
         std_vec: vec![
             (5506.000, 370.136),
             (46840983.314, 3698612.070),
@@ -259,7 +262,8 @@ fn pattern_c() -> TrafficPattern {
 fn pattern_d() -> TrafficPattern {
     TrafficPattern {
         pattern_type: RntiMatchingTrafficPatternType::D,
-        messages: generate_incremental_pattern(5, 13, 20000, 4000),
+        messages: generate_incremental_pattern(15, 7, 10000, 1),
+        /* DUMMY STD_VEC */
         std_vec: vec![
             (4033.685, 1241.680),
             (40102402.815, 12125065.759),
@@ -276,7 +280,8 @@ fn pattern_d() -> TrafficPattern {
 fn pattern_e() -> TrafficPattern {
     TrafficPattern {
         pattern_type: RntiMatchingTrafficPatternType::E,
-        messages: generate_incremental_pattern(10, 14, 20000, 4000),
+        messages: generate_incremental_pattern(20, 7, 10000, 1),
+        /* DUMMY STD_VEC */
         std_vec: vec![
             (7076.078, 1322.567),
             (84959693.091, 16536550.367),
@@ -293,7 +298,8 @@ fn pattern_e() -> TrafficPattern {
 fn pattern_f() -> TrafficPattern {
     TrafficPattern {
         pattern_type: RntiMatchingTrafficPatternType::F,
-        messages: generate_incremental_pattern(10, 15, 20000, 4000),
+        messages: generate_incremental_pattern(40, 7, 10000, 1),
+        /* DUMMY STD_VEC */
         std_vec: vec![
             (4963.692, 1691.421),
             (60475162.154, 18629696.408),
@@ -308,301 +314,164 @@ fn pattern_f() -> TrafficPattern {
 }
 
 fn pattern_g() -> TrafficPattern {
-    TrafficPattern {
-        pattern_type: RntiMatchingTrafficPatternType::G,
-        messages: VecDeque::from_iter([
-            /* to be determined */
-            TrafficPatternMessage {
-                time_ms: 10,
-                payload: vec![0xA0; 8192],
-            },
-            TrafficPatternMessage {
-                time_ms: 10,
-                payload: vec![0xA1; 8192],
-            },
-            TrafficPatternMessage {
-                time_ms: 10,
-                payload: vec![0xA2; 8192],
-            },
-            TrafficPatternMessage {
-                time_ms: 10,
-                payload: vec![0xA3; 8192],
-            },
-            TrafficPatternMessage {
-                time_ms: 10,
-                payload: vec![0xA4; 8192],
-            },
-            TrafficPatternMessage {
-                time_ms: 500,
-                payload: vec![0xA4; 8192],
-            },
-            TrafficPatternMessage {
-                time_ms: 10,
-                payload: vec![0xA1; 8192],
-            },
-            TrafficPatternMessage {
-                time_ms: 10,
-                payload: vec![0xA2; 8192],
-            },
-            TrafficPatternMessage {
-                time_ms: 10,
-                payload: vec![0xA3; 8192],
-            },
-            TrafficPatternMessage {
-                time_ms: 10,
-                payload: vec![0xA4; 8192],
-            },
-            TrafficPatternMessage {
-                time_ms: 500,
-                payload: vec![0xA4; 512],
-            },
-        ]),
-        ..Default::default()
-    }
-}
-
-fn pattern_h() -> TrafficPattern {
-    let mut messages: VecDeque<TrafficPatternMessage> = VecDeque::<TrafficPatternMessage>::new();
-    /* to be determined */
-    for _ in 0..1000 {
-        messages.push_back(TrafficPatternMessage {
-            time_ms: 10,
-            payload: vec![0xA0; 512],
-        })
-    }
-    TrafficPattern {
-        pattern_type: RntiMatchingTrafficPatternType::H,
-        messages,
-        ..Default::default()
-    }
-}
-
-fn pattern_i() -> TrafficPattern {
     let mut messages: VecDeque<TrafficPatternMessage> = VecDeque::<TrafficPatternMessage>::new();
 
-    let amplitude = 5000.0;
-    let vertical_shift = 10000.0;
-    let angular_frequency = std::f64::consts::PI; // omega = pi for T = 2s
-    let time_interval_ms = 50; // Constant inter-arrival time in milliseconds
+    let amplitude = 128.0;
+    let vertical_shift = 256.0;
+    let angular_frequency = 1.5 * std::f64::consts::PI; // omega = pi for T = 3s
+    let sending_interval_ms = 5;
+    let pattern_interval_ms = 10000;
 
-    for i in 0..200 {
-        let t = i as f64 * time_interval_ms as f64 / 1000.0;
+    for i in 0..(pattern_interval_ms / sending_interval_ms as u32) {
+        let t = i as f64 * sending_interval_ms as f64 / 1000.0;
         let packet_size =
             (amplitude * (angular_frequency * t).sin() + vertical_shift).round() as usize;
         messages.push_back(TrafficPatternMessage {
-            time_ms: time_interval_ms,
+            time_ms: sending_interval_ms,
             payload: vec![0xA0; packet_size],
         });
     }
 
     TrafficPattern {
-        pattern_type: RntiMatchingTrafficPatternType::I,
+        pattern_type: RntiMatchingTrafficPatternType::G,
         messages,
-        ..Default::default()
+        /* DUMMY STD_VEC */
+        std_vec: vec![
+            (4963.692, 1691.421),
+            (60475162.154, 18629696.408),
+            (13202.769, 1750.840),
+            (12332.931, 881.872),
+            (64867114.805, 20203503.942),
+            (2344.231, 301.511),
+            (5792.186, 2363.042),
+            (1210676863.405, 1269774046.111),
+        ],
+    }
+}
+
+fn pattern_h() -> TrafficPattern {
+    TrafficPattern {
+        pattern_type: RntiMatchingTrafficPatternType::H,
+        messages: generate_incremental_pattern(1, 8, 10000, 1),
+        /* DUMMY STD_VEC */
+        std_vec: vec![
+            (4298.972, 655.833),
+            (8977880.222, 1309843.824),
+            (914.222, 100.852),
+            (2098.996, 192.174),
+            (14021412.605, 1704132.447),
+            (4694.583, 654.029),
+            (6267.872, 969.600),
+            (294670529.455, 312539196.447),
+        ],
+    }
+}
+
+fn pattern_i() -> TrafficPattern {
+    TrafficPattern {
+        pattern_type: RntiMatchingTrafficPatternType::I,
+        messages: generate_incremental_pattern(5, 8, 10000, 1),
+        /* DUMMY STD_VEC */
+        std_vec: vec![
+            (4298.972, 655.833),
+            (8977880.222, 1309843.824),
+            (914.222, 100.852),
+            (2098.996, 192.174),
+            (14021412.605, 1704132.447),
+            (4694.583, 654.029),
+            (6267.872, 969.600),
+            (294670529.455, 312539196.447),
+        ],
     }
 }
 
 fn pattern_j() -> TrafficPattern {
-    let mut messages: VecDeque<TrafficPatternMessage> = VecDeque::<TrafficPatternMessage>::new();
-    /* to be determined */
-    for _ in 0..500 {
-        messages.push_back(TrafficPatternMessage {
-            time_ms: 1,
-            payload: vec![0xA0; 32],
-        })
-    }
-    for _ in 0..500 {
-        messages.push_back(TrafficPatternMessage {
-            time_ms: 1,
-            payload: vec![0xA0; 64],
-        })
-    }
-    for _ in 0..500 {
-        messages.push_back(TrafficPatternMessage {
-            time_ms: 1,
-            payload: vec![0xA0; 32],
-        })
-    }
-    for _ in 0..500 {
-        messages.push_back(TrafficPatternMessage {
-            time_ms: 1,
-            payload: vec![0xA0; 64],
-        })
-    }
     TrafficPattern {
         pattern_type: RntiMatchingTrafficPatternType::J,
-        messages,
-        ..Default::default()
+        messages: generate_incremental_pattern(10, 8, 10000, 1),
+        /* DUMMY STD_VEC */
+        std_vec: vec![
+            (4298.972, 655.833),
+            (8977880.222, 1309843.824),
+            (914.222, 100.852),
+            (2098.996, 192.174),
+            (14021412.605, 1704132.447),
+            (4694.583, 654.029),
+            (6267.872, 969.600),
+            (294670529.455, 312539196.447),
+        ],
     }
 }
 
-/* K and J do not show a pattern similar to J -> maybe, 250ms is too short */
 fn pattern_k() -> TrafficPattern {
-    let mut messages: VecDeque<TrafficPatternMessage> = VecDeque::<TrafficPatternMessage>::new();
-    /* to be determined */
-    for _ in 0..250 {
-        messages.push_back(TrafficPatternMessage {
-            time_ms: 1,
-            payload: vec![0xA0; 32],
-        })
-    }
-    for _ in 0..250 {
-        messages.push_back(TrafficPatternMessage {
-            time_ms: 1,
-            payload: vec![0xA0; 64],
-        })
-    }
-    for _ in 0..250 {
-        messages.push_back(TrafficPatternMessage {
-            time_ms: 1,
-            payload: vec![0xA0; 32],
-        })
-    }
-    for _ in 0..250 {
-        messages.push_back(TrafficPatternMessage {
-            time_ms: 1,
-            payload: vec![0xA0; 64],
-        })
-    }
     TrafficPattern {
         pattern_type: RntiMatchingTrafficPatternType::K,
-        messages,
-        ..Default::default()
+        messages: generate_incremental_pattern(15, 8, 10000, 1),
+        /* DUMMY STD_VEC */
+        std_vec: vec![
+            (4298.972, 655.833),
+            (8977880.222, 1309843.824),
+            (914.222, 100.852),
+            (2098.996, 192.174),
+            (14021412.605, 1704132.447),
+            (4694.583, 654.029),
+            (6267.872, 969.600),
+            (294670529.455, 312539196.447),
+        ],
     }
 }
 
 fn pattern_l() -> TrafficPattern {
-    let mut messages: VecDeque<TrafficPatternMessage> = VecDeque::<TrafficPatternMessage>::new();
-    /* to be determined */
-    for _ in 0..250 {
-        messages.push_back(TrafficPatternMessage {
-            time_ms: 1,
-            payload: vec![0xA0; 32],
-        })
-    }
-
-    messages.push_back(TrafficPatternMessage {
-        time_ms: 250,
-        payload: vec![0xA0; 32],
-    });
-
-    for _ in 0..250 {
-        messages.push_back(TrafficPatternMessage {
-            time_ms: 1,
-            payload: vec![0xA0; 32],
-        })
-    }
-
-    messages.push_back(TrafficPatternMessage {
-        time_ms: 250,
-        payload: vec![0xA0; 32],
-    });
-
     TrafficPattern {
         pattern_type: RntiMatchingTrafficPatternType::L,
-        messages,
-        ..Default::default()
+        messages: generate_incremental_pattern(20, 8, 10000, 1),
+        /* DUMMY STD_VEC */
+        std_vec: vec![
+            (4298.972, 655.833),
+            (8977880.222, 1309843.824),
+            (914.222, 100.852),
+            (2098.996, 192.174),
+            (14021412.605, 1704132.447),
+            (4694.583, 654.029),
+            (6267.872, 969.600),
+            (294670529.455, 312539196.447),
+        ],
     }
 }
 
 fn pattern_m() -> TrafficPattern {
-    let mut messages: VecDeque<TrafficPatternMessage> = VecDeque::<TrafficPatternMessage>::new();
-    /* to be determined */
-    for _ in 0..500 {
-        messages.push_back(TrafficPatternMessage {
-            time_ms: 1,
-            payload: vec![0xA0; 32],
-        })
-    }
-    for _ in 0..500 {
-        messages.push_back(TrafficPatternMessage {
-            time_ms: 1,
-            payload: vec![0xA0; 64],
-        })
-    }
-    for _ in 0..500 {
-        messages.push_back(TrafficPatternMessage {
-            time_ms: 1,
-            payload: vec![0xA0; 32],
-        })
-    }
-    for _ in 0..500 {
-        messages.push_back(TrafficPatternMessage {
-            time_ms: 1,
-            payload: vec![0xA0; 64],
-        })
-    }
-
-    messages.push_back(TrafficPatternMessage {
-        time_ms: 250,
-        payload: vec![0xA0; 16000],
-    });
-
-    for _ in 0..500 {
-        messages.push_back(TrafficPatternMessage {
-            time_ms: 1,
-            payload: vec![0xA0; 32],
-        })
-    }
-    for _ in 0..500 {
-        messages.push_back(TrafficPatternMessage {
-            time_ms: 1,
-            payload: vec![0xA0; 64],
-        })
-    }
-
-    messages.push_back(TrafficPatternMessage {
-        time_ms: 250,
-        payload: vec![0xA0; 16000],
-    });
-
-    for _ in 0..500 {
-        messages.push_back(TrafficPatternMessage {
-            time_ms: 1,
-            payload: vec![0xA0; 32],
-        })
-    }
-    for _ in 0..500 {
-        messages.push_back(TrafficPatternMessage {
-            time_ms: 1,
-            payload: vec![0xA0; 64],
-        })
-    }
-
     TrafficPattern {
         pattern_type: RntiMatchingTrafficPatternType::M,
-        messages,
-        ..Default::default()
+        messages: generate_incremental_pattern(40, 8, 10000, 1),
+        /* DUMMY STD_VEC */
+        std_vec: vec![
+            (4298.972, 655.833),
+            (8977880.222, 1309843.824),
+            (914.222, 100.852),
+            (2098.996, 192.174),
+            (14021412.605, 1704132.447),
+            (4694.583, 654.029),
+            (6267.872, 969.600),
+            (294670529.455, 312539196.447),
+        ],
     }
 }
 
 fn pattern_n() -> TrafficPattern {
-    let mut messages: VecDeque<TrafficPatternMessage> = VecDeque::<TrafficPatternMessage>::new();
-    /* to be determined */
-    for _ in 0..500 {
-        messages.push_back(TrafficPatternMessage {
-            time_ms: 1,
-            payload: vec![0xA0; 32],
-        })
-    }
-    for _ in 0..500 {
-        messages.push_back(TrafficPatternMessage {
-            time_ms: 1,
-            payload: vec![0xA0; 64],
-        })
-    }
-
-    for _ in 0..50 {
-        messages.push_back(TrafficPatternMessage {
-            time_ms: 20,
-            payload: vec![0xA0; 512],
-        })
-    }
-
     TrafficPattern {
         pattern_type: RntiMatchingTrafficPatternType::N,
-        messages,
-        ..Default::default()
+        messages: generate_incremental_pattern(40, 8, 5000, 5000),
+        /* DUMMY STD_VEC */
+        std_vec: vec![
+            (4298.972, 655.833),
+            (8977880.222, 1309843.824),
+            (914.222, 100.852),
+            (2098.996, 192.174),
+            (14021412.605, 1704132.447),
+            (4694.583, 654.029),
+            (6267.872, 969.600),
+            (294670529.455, 312539196.447),
+        ],
     }
 }
 

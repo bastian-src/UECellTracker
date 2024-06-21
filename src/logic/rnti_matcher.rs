@@ -38,7 +38,7 @@ pub const MATCHING_UL_BYTES_UPPER_BOUND_FACTOR: f64 = 4.0;
 pub const TIME_MS_TO_US_FACTOR: u64 = 1000;
 pub const COLLECT_DCI_MAX_TIMESTAMP_DELTA_US: u64 = 50000;
 
-pub const BASIC_FILTER_MAX_TOTAL_UL_FACTOR: f64 = 100.0;
+pub const BASIC_FILTER_MAX_TOTAL_UL_FACTOR: f64 = 200.0;
 pub const BASIC_FILTER_MIN_TOTAL_UL_FACTOR: f64 = 0.005;
 pub const BASIC_FILTER_MAX_UL_PER_DCI: u64 = 5_000_000;
 pub const BASIC_FILTER_MIN_OCCURENCES_FACTOR: f64 = 0.005;
@@ -405,6 +405,8 @@ fn run_traffic_generator(
         determine_process_id()
     ));
 
+    let mut last_timemstamp_us: Option<u64> = None;
+
     loop {
         match check_rx_state(&rx_local_gen_state) {
             Ok(Some(new_state)) => gen_state = new_state,
@@ -424,7 +426,7 @@ fn run_traffic_generator(
                 break;
             }
             LocalGeneratorState::SendPattern(ref destination, ref mut pattern) => {
-                match gen_handle_send_pattern(&socket, destination, pattern) {
+                match gen_handle_send_pattern(&socket, destination, pattern, &mut last_timemstamp_us) {
                     Ok(Some(_)) => { /* stay in the state and keep sending */ },
                     Ok(None) => gen_state = LocalGeneratorState::PatternSent,
                     Err(e) => {
@@ -435,6 +437,7 @@ fn run_traffic_generator(
             }
             LocalGeneratorState::PatternSent => {
                 print_info("[rntimatcher.gen] Finished sending pattern!");
+                last_timemstamp_us = None;
                 gen_state = LocalGeneratorState::Idle
             }
         }
@@ -468,11 +471,33 @@ fn gen_handle_send_pattern(
     socket: &UdpSocket,
     destination: &str,
     pattern: &mut TrafficPattern,
+    last_sent_timemstamp_us: &mut Option<u64>,
 ) -> Result<Option<()>> {
     match pattern.messages.pop_front() {
         Some(msg) => {
-            thread::sleep(Duration::from_millis(msg.time_ms as u64));
+            let sleep_us: u64;
+
+            let now_us = chrono::Utc::now().timestamp_micros() as u64;
+            if let Some(ref mut timestamp_us) = last_sent_timemstamp_us {
+                /* Determine time delta and adapt sleeping time */
+                let delta = now_us - *timestamp_us;
+                if delta > msg.time_ms as u64 * TIME_MS_TO_US_FACTOR {
+                    print_info(&format!("[rntimatcher.gen] sending time interval exceeded by: {:?}us", delta));
+                    sleep_us = msg.time_ms as u64 * TIME_MS_TO_US_FACTOR;
+                } else {
+                    sleep_us = (msg.time_ms as u64 * TIME_MS_TO_US_FACTOR) - delta;
+                }
+            } else {
+                /* First packet, just sleep and send */
+                sleep_us = msg.time_ms as u64 * TIME_MS_TO_US_FACTOR;
+            }
+
+            thread::sleep(Duration::from_micros(sleep_us));
+
+            *last_sent_timemstamp_us = Some(chrono::Utc::now().timestamp_micros() as u64);
+
             socket.send_to(&msg.payload, destination)?;
+
             Ok(Some(()))
         }
         None => Ok(None)
@@ -603,7 +628,7 @@ impl TrafficCollection {
                     /* ZERO MEDIAN */
                     .filter(|(_, ue_traffic)| {
                         match ue_traffic.feature_ul_bytes_median_mean_variance() {
-                            Ok((median, _, _)) if median <= 0.0 => true,
+                            Ok((median, _, _)) if median > 0.0 => true,
                             _ => {
                                 stats.zero_ul_median += 1;
                                 false
