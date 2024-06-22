@@ -4,62 +4,65 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use anyhow::{anyhow, Result};
-use bus::BusReader;
+use bus::{BusReader, Bus};
 
 use crate::logic::{
     check_not_stopped, wait_until_running, MainState, MessageCellInfo, MessageDci, MessageRnti,
-    SinkState, DEFAULT_WORKER_SLEEP_US,
+    MessageMetric, ModelState, DEFAULT_WORKER_SLEEP_US,
 };
 use crate::util::determine_process_id;
 
-pub struct CellSinkArgs {
+pub struct ModelHandlerArgs {
     pub rx_app_state: BusReader<MainState>,
-    pub tx_sink_state: SyncSender<SinkState>,
+    pub tx_model_state: SyncSender<ModelState>,
     pub rx_cell_info: BusReader<MessageCellInfo>,
     pub rx_dci: BusReader<MessageDci>,
     pub rx_rnti: BusReader<MessageRnti>,
+    pub tx_metric: Bus<MessageMetric>,
 }
 
-pub fn deploy_cell_sink(mut args: CellSinkArgs) -> Result<JoinHandle<()>> {
+pub fn deploy_model_handler(mut args: ModelHandlerArgs) -> Result<JoinHandle<()>> {
     let thread = thread::spawn(move || {
         let _ = run(
             args.rx_app_state,
-            args.tx_sink_state,
+            args.tx_model_state,
             &mut args.rx_cell_info,
             &mut args.rx_dci,
             &mut args.rx_rnti,
+            &mut args.tx_metric,
         );
     });
     Ok(thread)
 }
 
-fn send_final_state(tx_sink_state: &SyncSender<SinkState>) -> Result<()> {
-    Ok(tx_sink_state.send(SinkState::Stopped)?)
+fn send_final_state(tx_model_state: &SyncSender<ModelState>) -> Result<()> {
+    Ok(tx_model_state.send(ModelState::Stopped)?)
 }
 
 fn wait_for_running(
     rx_app_state: &mut BusReader<MainState>,
-    tx_sink_state: &SyncSender<SinkState>,
+    tx_model_state: &SyncSender<ModelState>,
 ) -> Result<()> {
     match wait_until_running(rx_app_state) {
         Ok(_) => Ok(()),
         _ => {
-            send_final_state(tx_sink_state)?;
-            Err(anyhow!("[sink] Main did not send 'Running' message"))
+            send_final_state(tx_model_state)?;
+            Err(anyhow!("[model] Main did not send 'Running' message"))
         }
     }
 }
 
 fn run(
     mut rx_app_state: BusReader<MainState>,
-    tx_sink_state: SyncSender<SinkState>,
+    tx_model_state: SyncSender<ModelState>,
     rx_cell_info: &mut BusReader<MessageCellInfo>,
     rx_dci: &mut BusReader<MessageDci>,
     rx_rnti: &mut BusReader<MessageRnti>,
+    _tx_metric: &mut Bus<MessageMetric>,
 ) -> Result<()> {
-    tx_sink_state.send(SinkState::Running)?;
-    wait_for_running(&mut rx_app_state, &tx_sink_state)?;
-    print_info(&format!("[sink]: \t\tPID {:?}", determine_process_id()));
+    tx_model_state.send(ModelState::Running)?;
+    wait_for_running(&mut rx_app_state, &tx_model_state)?;
+    print_info(&format!("[model]: \t\tPID {:?}", determine_process_id()));
     let sleep_duration = Duration::from_micros(DEFAULT_WORKER_SLEEP_US);
 
     loop {
@@ -90,16 +93,16 @@ fn run(
         if let Some(rnti_msg) = new_rnti {
             if !rnti_msg.cell_rnti.is_empty() {
                 print_debug(&format!(
-                    "DEBUG [sink] new rnti {:#?}",
+                    "DEBUG [model] new rnti {:#?}",
                     rnti_msg.cell_rnti.get(&0).unwrap()
                 ));
             }
         }
 
-        // TODO: Consume rx_dci, rx_cell_info, and rx_rnti
         // TODO: -> Send combined message to some remote
+        //   tx_metrc.send(metrics)
     }
 
-    send_final_state(&tx_sink_state)?;
+    send_final_state(&tx_model_state)?;
     Ok(())
 }
