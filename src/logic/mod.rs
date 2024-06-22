@@ -13,7 +13,7 @@ use crate::logic::rnti_matcher::TrafficCollection;
 use crate::ngscope::config::NgScopeConfig;
 use crate::ngscope::types::NgScopeCellDci;
 
-pub mod cell_sink;
+pub mod model_handler;
 pub mod cell_source;
 pub mod ngscope_controller;
 pub mod rnti_matcher;
@@ -28,6 +28,7 @@ pub const BUS_SIZE_APP_STATE: usize = 50;
 pub const BUS_SIZE_DCI: usize = 100000;
 pub const BUS_SIZE_CELL_INFO: usize = 100;
 pub const BUS_SIZE_RNTI: usize = 100;
+pub const BUS_SIZE_METRIC: usize = 100;
 
 pub trait WorkerState: Sized + Clone + Sync + Debug {
     fn to_general_state(&self) -> GeneralState;
@@ -108,21 +109,21 @@ impl WorkerState for MainState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum SinkState {
+pub enum ModelState {
     Running,
     Stopped,
     SpecialState,
 }
 
-impl WorkerState for SinkState {
+impl WorkerState for ModelState {
     fn worker_name() -> String {
-        "sink".to_owned()
+        "model".to_owned()
     }
 
     fn to_general_state(&self) -> GeneralState {
         match self {
-            SinkState::Running => GeneralState::Running,
-            SinkState::Stopped => GeneralState::Stopped,
+            ModelState::Running => GeneralState::Running,
+            ModelState::Stopped => GeneralState::Stopped,
             _ => GeneralState::Unknown,
         }
     }
@@ -253,6 +254,15 @@ pub struct MessageCellInfo {
 pub struct MessageRnti {
     /* cell_id -> ue_rnti */
     cell_rnti: HashMap<u64, u16>,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct MessageMetric {
+    /// Timestamp when the metric was calculated (not sent!)
+    timestamp_us: u64,
+    /// Fair share send rate [bits/subframe] = [bits/ms]
+    fair_share_send_rate: u64,
 }
 
 /*  --------------  */

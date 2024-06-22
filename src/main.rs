@@ -17,28 +17,28 @@ mod parse;
 mod util;
 mod math_util;
 
-use logic::cell_sink::{deploy_cell_sink, CellSinkArgs};
+use logic::model_handler::{deploy_model_handler, ModelHandlerArgs};
 use logic::cell_source::{deploy_cell_source, CellSourceArgs};
 use logic::ngscope_controller::{deploy_ngscope_controller, NgControlArgs};
 use logic::rnti_matcher::{deploy_rnti_matcher, RntiMatcherArgs};
-use logic::WorkerChannel;
+use logic::{WorkerChannel, MessageMetric, BUS_SIZE_METRIC};
 use logic::{
     GeneralState, MainState, MessageCellInfo, MessageDci, MessageRnti, NgControlState,
-    RntiMatcherState, SinkState, SourceState, WorkerState, BUS_SIZE_APP_STATE, BUS_SIZE_CELL_INFO,
+    RntiMatcherState, ModelState, SourceState, WorkerState, BUS_SIZE_APP_STATE, BUS_SIZE_CELL_INFO,
     BUS_SIZE_DCI, BUS_SIZE_RNTI, CHANNEL_SYNC_SIZE, WORKER_SLEEP_LONG_MS,
 };
 use parse::Arguments;
 use util::{determine_process_id, is_notifier, prepare_sigint_notifier, print_info, set_debug};
 
 struct CombinedReceivers {
-    pub sink: Receiver<SinkState>,
+    pub model: Receiver<ModelState>,
     pub source: Receiver<SourceState>,
     pub rntimatcher: Receiver<RntiMatcherState>,
     pub ngcontrol: Receiver<NgControlState>,
 }
 
 struct CombinedSenders {
-    pub sink: SyncSender<SinkState>,
+    pub model: SyncSender<ModelState>,
     pub source: SyncSender<SourceState>,
     pub rntimatcher: SyncSender<RntiMatcherState>,
     pub ngcontrol: SyncSender<NgControlState>,
@@ -47,7 +47,7 @@ struct CombinedSenders {
 impl CombinedReceivers {
     fn print_worker_messages(&self) {
         let _ = &self.source.worker_print_on_recv();
-        let _ = &self.sink.worker_print_on_recv();
+        let _ = &self.model.worker_print_on_recv();
         let _ = &self.ngcontrol.worker_print_on_recv();
         let _ = &self.rntimatcher.worker_print_on_recv();
     }
@@ -61,13 +61,15 @@ fn deploy_app(
     let mut tx_dci: Bus<MessageDci> = Bus::<MessageDci>::new(BUS_SIZE_DCI);
     let mut tx_cell_info: Bus<MessageCellInfo> = Bus::<MessageCellInfo>::new(BUS_SIZE_CELL_INFO);
     let mut tx_rnti: Bus<MessageRnti> = Bus::<MessageRnti>::new(BUS_SIZE_RNTI);
+    let tx_metric: Bus<MessageMetric> = Bus::<MessageMetric>::new(BUS_SIZE_METRIC);
 
-    let sink_args = CellSinkArgs {
+    let model_args = ModelHandlerArgs {
         rx_app_state: tx_app_state.add_rx(),
-        tx_sink_state: all_tx_states.sink,
+        tx_model_state: all_tx_states.model,
         rx_cell_info: tx_cell_info.add_rx(),
         rx_dci: tx_dci.add_rx(),
         rx_rnti: tx_rnti.add_rx(),
+        tx_metric,
     };
     let rntimatcher_args = RntiMatcherArgs {
         rx_app_state: tx_app_state.add_rx(),
@@ -93,7 +95,7 @@ fn deploy_app(
     let tasks: Vec<JoinHandle<()>> = vec![
         deploy_ngscope_controller(ngcontrol_args)?,
         deploy_cell_source(source_args)?,
-        deploy_cell_sink(sink_args)?,
+        deploy_model_handler(model_args)?,
         deploy_rnti_matcher(rntimatcher_args)?,
     ];
     Ok(tasks)
@@ -131,7 +133,7 @@ fn wait_all_running(
 ) -> Result<()> {
     print_info("[ ] waiting for all threads to become ready");
 
-    let mut waiting_for: HashSet<&str> = vec!["source", "sink", "rntimatcher", "ngcontrol"]
+    let mut waiting_for: HashSet<&str> = vec!["source", "model", "rntimatcher", "ngcontrol"]
         .into_iter()
         .collect();
 
@@ -146,9 +148,9 @@ fn wait_all_running(
                 waiting_for.remove("source");
             }
         }
-        if waiting_for.contains("sink") {
-            if let Ok(Some(_)) = check_running(&all_rx_states.sink) {
-                waiting_for.remove("sink");
+        if waiting_for.contains("model") {
+            if let Ok(Some(_)) = check_running(&all_rx_states.model) {
+                waiting_for.remove("model");
             }
         }
         if waiting_for.contains("rntimatcher") {
@@ -183,18 +185,18 @@ fn main() -> Result<(), Box<dyn Error>> {
     let sigint_notifier = prepare_sigint_notifier()?;
 
     let mut tx_app_state = Bus::<MainState>::new(BUS_SIZE_APP_STATE);
-    let (sink_tx, sink_rx) = sync_channel::<SinkState>(CHANNEL_SYNC_SIZE);
+    let (model_tx, model_rx) = sync_channel::<ModelState>(CHANNEL_SYNC_SIZE);
     let (source_tx, source_rx) = sync_channel::<SourceState>(CHANNEL_SYNC_SIZE);
     let (rntimatcher_tx, rntimatcher_rx) = sync_channel::<RntiMatcherState>(CHANNEL_SYNC_SIZE);
     let (ngcontrol_tx, ngcontrol_rx) = sync_channel::<NgControlState>(CHANNEL_SYNC_SIZE);
     let all_tx_states = CombinedSenders {
-        sink: sink_tx,
+        model: model_tx,
         source: source_tx,
         rntimatcher: rntimatcher_tx,
         ngcontrol: ngcontrol_tx,
     };
     let all_rx_states = CombinedReceivers {
-        sink: sink_rx,
+        model: model_rx,
         source: source_rx,
         rntimatcher: rntimatcher_rx,
         ngcontrol: ngcontrol_rx,
