@@ -62,3 +62,7 @@ sudo sysctl -w net.ipv6.conf.lo.disable_ipv6=1
 ```
 
 The configuration can be made persistently by editing/adding `/etc/sysctl.d/`.
+
+## Data
+
+Example data and results can be found [here](https://nextcloud.schmidt-systems.eu/s/AYqZDwtWxAeQY8N).
