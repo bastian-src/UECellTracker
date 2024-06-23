@@ -41,7 +41,7 @@ pub const COLLECT_DCI_MAX_TIMESTAMP_DELTA_US: u64 = 50000;
 pub const BASIC_FILTER_MAX_TOTAL_UL_FACTOR: f64 = 200.0;
 pub const BASIC_FILTER_MIN_TOTAL_UL_FACTOR: f64 = 0.005;
 pub const BASIC_FILTER_MAX_UL_PER_DCI: u64 = 5_000_000;
-pub const BASIC_FILTER_MIN_OCCURENCES_FACTOR: f64 = 0.005;
+pub const BASIC_FILTER_MIN_OCCURENCES_FACTOR: f64 = 0.05;
 
 pub const RNTI_RING_BUFFER_SIZE: usize = 5;
 
@@ -805,7 +805,7 @@ fn feature_distance_matrices(
                 &weightings_vector);
             
             // Uncomment and implement debug print if needed
-            // print_debug(&format!("DEBUG [rntimatcher] distances: {:.2}", euclidean_distances));
+            print_debug(&format!("DEBUG [rntimatcher] distances: {:.2}", euclidean_distances));
 
             let mut rnti_and_distance: Vec<(u16, f64)> = cell_traffic.traffic.keys()
                 .cloned()

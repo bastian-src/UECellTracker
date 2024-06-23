@@ -31,7 +31,7 @@ SAMPLES_THRESHOLD = 5
 MAX_TOTAL_UL_FACTOR = 200.0
 MIN_TOTAL_UL_FACTOR = 0.005 # x% of the expected UL traffic
 MAX_UL_PER_DCI_THRESHOLD = 5_000_000
-MIN_OCCURENCES_FACTOR = 0.005
+MIN_OCCURENCES_FACTOR = 0.05
 
 # Plotting
 PLOT_SCATTER_MARKER_SIZE = 10
@@ -464,7 +464,7 @@ def standardize(settings):
     std_count = (np.mean(count_vec), np.std(count_vec))
     std_total_ul = (np.mean(total_ul_vec), np.std(total_ul_vec))
 
-    std_ul_timeline_median = (
+    ul_timeline_median = (
             np.mean(ul_timeline_matrix[:, 0]),
             np.std(ul_timeline_matrix[:, 0])
     )
@@ -498,7 +498,7 @@ def standardize(settings):
     print("vec![")
     print(f"    ({std_count[0]:.3f}, {std_count[1]:.3f}),")
     print(f"    ({std_total_ul[0]:.3f}, {std_total_ul[1]:.3f}),")
-    print(f"    ({std_ul_timeline_median[0]:.3f}, {std_ul_timeline_median[1]:.3f}),")
+    print(f"    ({ul_timeline_median[0]:.3f}, {ul_timeline_median[1]:.3f}),")
     print(f"    ({ul_timeline_mean[0]:.3f}, {ul_timeline_mean[1]:.3f}),")
     print(f"    ({ul_timeline_variance[0]:.3f}, {ul_timeline_variance[1]:.3f}),")
     print(f"    ({dci_time_deltas_median[0]:.3f}, {dci_time_deltas_median[1]:.3f}),")
@@ -522,7 +522,7 @@ def read_all_recordings(settings):
 
 
 def determine_highest_count_ul_timeline(df):
-    rnti = "11223"
+    rnti = "11852"
     target_traffic: pd.DataFrame = pd.DataFrame()
 
     if not rnti in df.columns:
