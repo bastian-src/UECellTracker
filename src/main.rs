@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use bus::Bus;
+use bus::{Bus, BusReader};
 use casual_logger::{Level, Log};
 use std::collections::HashSet;
 use std::error::Error;
@@ -61,7 +61,8 @@ fn deploy_app(
     let mut tx_dci: Bus<MessageDci> = Bus::<MessageDci>::new(BUS_SIZE_DCI);
     let mut tx_cell_info: Bus<MessageCellInfo> = Bus::<MessageCellInfo>::new(BUS_SIZE_CELL_INFO);
     let mut tx_rnti: Bus<MessageRnti> = Bus::<MessageRnti>::new(BUS_SIZE_RNTI);
-    let tx_metric: Bus<MessageMetric> = Bus::<MessageMetric>::new(BUS_SIZE_METRIC);
+    let mut tx_metric: Bus<MessageMetric> = Bus::<MessageMetric>::new(BUS_SIZE_METRIC);
+    let rx_metric: BusReader<MessageMetric> = tx_metric.add_rx();
 
     let model_args = ModelHandlerArgs {
         rx_app_state: tx_app_state.add_rx(),
@@ -77,6 +78,7 @@ fn deploy_app(
         app_args: app_args.clone(),
         rx_dci: tx_dci.add_rx(),
         tx_rnti,
+        rx_metric,
     };
     let ngcontrol_args = NgControlArgs {
         rx_app_state: tx_app_state.add_rx(),

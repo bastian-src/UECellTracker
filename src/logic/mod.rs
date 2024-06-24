@@ -256,9 +256,21 @@ pub struct MessageRnti {
     cell_rnti: HashMap<u64, u16>,
 }
 
+/* Wrapping messages */
 #[allow(dead_code)]
-#[derive(Clone, Debug, PartialEq, Default)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct MessageMetric {
+    metric: MetricTypes,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum MetricTypes {
+    A(MetricA),
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MetricA {
     /// Timestamp when the metric was calculated (not sent!)
     timestamp_us: u64,
     /// Fair share send rate [bits/subframe] = [bits/ms]
