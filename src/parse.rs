@@ -122,13 +122,17 @@ pub struct RntiMatchingArgs {
     #[arg(long, required = false)]
     pub matching_local_addr: Option<String>,
 
-    /// Define which traffic pattern to use to fetch cell data
+    /// List of traffic patterns (iterates all given patterns)
     #[arg(long, value_enum, required = false)]
     pub matching_traffic_pattern: Option<Vec<RntiMatchingTrafficPatternType>>,
 
     /// The destination address which the traffic pattern is sent to
     #[arg(long, required = false)]
     pub matching_traffic_destination: Option<String>,
+
+    /// Log traffic used for matching (in ./logs/rnti_matching*.jsonl)
+    #[arg(long, required = false)]
+    pub matching_log_traffic: Option<bool>,
 }
 
 #[derive(Clone, Debug)]
@@ -136,6 +140,7 @@ pub struct FlattenedRntiMatchingArgs {
     pub matching_local_addr: String,
     pub matching_traffic_pattern: Vec<RntiMatchingTrafficPatternType>,
     pub matching_traffic_destination: String,
+    pub matching_log_traffic: bool,
 }
 
 impl default::Default for Arguments {
@@ -163,6 +168,7 @@ impl default::Default for Arguments {
                 matching_local_addr: Some("0.0.0.0:9292".to_string()),
                 matching_traffic_pattern: Some(vec![RntiMatchingTrafficPatternType::A]),
                 matching_traffic_destination: Some("1.1.1.1:53".to_string()),
+                matching_log_traffic: Some(true),
             }),
         }
     }
@@ -270,6 +276,7 @@ impl FlattenedRntiMatchingArgs {
             matching_local_addr: rnti_args.matching_local_addr.unwrap(),
             matching_traffic_pattern: rnti_args.matching_traffic_pattern.unwrap(),
             matching_traffic_destination: rnti_args.matching_traffic_destination.unwrap(),
+            matching_log_traffic: rnti_args.matching_log_traffic.unwrap(),
         })
     }
 }

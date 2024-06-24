@@ -12,6 +12,8 @@ use crate::logic::{
 };
 use crate::util::determine_process_id;
 
+use super::{MetricA, MetricTypes};
+
 pub struct ModelHandlerArgs {
     pub rx_app_state: BusReader<MainState>,
     pub tx_model_state: SyncSender<ModelState>,
@@ -58,7 +60,7 @@ fn run(
     rx_cell_info: &mut BusReader<MessageCellInfo>,
     rx_dci: &mut BusReader<MessageDci>,
     rx_rnti: &mut BusReader<MessageRnti>,
-    _tx_metric: &mut Bus<MessageMetric>,
+    tx_metric: &mut Bus<MessageMetric>,
 ) -> Result<()> {
     tx_model_state.send(ModelState::Running)?;
     wait_for_running(&mut rx_app_state, &tx_model_state)?;
@@ -99,8 +101,18 @@ fn run(
             }
         }
 
-        // TODO: -> Send combined message to some remote
-        //   tx_metrc.send(metrics)
+        /* Test sending data */
+        tx_metric.broadcast(MessageMetric {
+            metric: MetricTypes::A(MetricA {
+                timestamp_us: 121,
+                fair_share_send_rate: 121231,
+            })
+        });
+        // TODO: Implement sending metric
+        //   * Send combined message to remote properly
+        //   * Add input parameter to choose metric type and sending interval (or more like a "how
+        //   many subframes shall I use)
+
     }
 
     send_final_state(&tx_model_state)?;
