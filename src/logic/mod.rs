@@ -13,8 +13,8 @@ use crate::logic::rnti_matcher::TrafficCollection;
 use crate::ngscope::config::NgScopeConfig;
 use crate::ngscope::types::NgScopeCellDci;
 
-pub mod model_handler;
 pub mod cell_source;
+pub mod model_handler;
 pub mod ngscope_controller;
 pub mod rnti_matcher;
 pub mod traffic_patterns;
@@ -271,10 +271,22 @@ pub enum MetricTypes {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MetricA {
-    /// Timestamp when the metric was calculated (not sent!)
+    /// Timestamp when the metric was calculated
     timestamp_us: u64,
     /// Fair share send rate [bits/subframe] = [bits/ms]
     fair_share_send_rate: u64,
+    /// Timestamp of the latest DCI used to calculate the metric
+    latest_dci_timestamp_us: u64,
+    /// Timestamp of the oldest DCI used to calculate the metric
+    oldest_dci_timestamp_us: u64,
+    /// Number of DCIs used to calculate the metric
+    nof_dci: u16,
+    /// Number of phy-layer re-transmissions
+    nof_re_tx: u16,
+    /// Flag, signalling whether phy_rate was averagerd over all RNTIs or just our UE RNTI
+    flag_phy_rate_all_rnti: u8,
+    /// Average bit per PRB (either over all RNTIs or just the UE RNTI)
+    phy_rate: u64,
 }
 
 /*  --------------  */

@@ -1,21 +1,19 @@
 #![allow(dead_code)]
 
-use std::hash::Hash;
-use std::collections::{VecDeque, HashMap};
-use std::fs::{File, OpenOptions};
-use std::io::Write;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use casual_logger::{Level, Log};
 use lazy_static::lazy_static;
+use std::collections::{HashMap, VecDeque};
+use std::fs::{File, OpenOptions};
+use std::hash::Hash;
+use std::io::Write;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use crate::logic::rnti_matcher::TrafficCollection;
 
-
 pub const MATCHING_LOG_FILE_PREFIX: &str = "./.logs/rnti_matching_pattern_";
 pub const MATCHING_LOG_FILE_SUFFIX: &str = ".jsonl";
-
 
 #[derive(Clone, Debug, Default)]
 pub struct RingBuffer<T> {
@@ -29,7 +27,7 @@ pub struct CellRntiRingBuffer {
     size: usize,
 }
 
-impl<T> RingBuffer<T> 
+impl<T> RingBuffer<T>
 where
     T: Eq + Hash + Clone,
 {
@@ -69,7 +67,8 @@ impl CellRntiRingBuffer {
 
     pub fn update(&mut self, cell_rntis: &HashMap<u64, u16>) {
         for (&cell, &rnti) in cell_rntis.iter() {
-            let cell_buffer = self.cell_buffers
+            let cell_buffer = self
+                .cell_buffers
                 .entry(cell)
                 .or_insert_with(|| RingBuffer::new(self.size));
             cell_buffer.add(rnti);
@@ -86,7 +85,6 @@ impl CellRntiRingBuffer {
         cell_rntis
     }
 }
-
 
 pub fn prepare_sigint_notifier() -> Result<Arc<AtomicBool>> {
     let notifier = Arc::new(AtomicBool::new(false));
@@ -168,13 +166,12 @@ impl LogExt for Log {
     }
 }
 
-pub fn log_rnti_matching_traffic(
-    traffic_collection: &TrafficCollection,
-) -> Result<()> {
-
+pub fn log_rnti_matching_traffic(traffic_collection: &TrafficCollection) -> Result<()> {
     let matching_log_file_path = &format!(
         "{}{:?}{}",
-        MATCHING_LOG_FILE_PREFIX, traffic_collection.traffic_pattern_features.pattern_type, MATCHING_LOG_FILE_SUFFIX
+        MATCHING_LOG_FILE_PREFIX,
+        traffic_collection.traffic_pattern_features.pattern_type,
+        MATCHING_LOG_FILE_SUFFIX
     );
 
     print_debug(&format!(
@@ -203,5 +200,3 @@ pub fn set_debug(level: bool) {
 pub fn is_debug() -> bool {
     IS_DEBUG.load(Ordering::SeqCst)
 }
-
-

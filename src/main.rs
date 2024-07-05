@@ -12,21 +12,21 @@ use std::time::Duration;
 
 mod cell_info;
 mod logic;
+mod math_util;
 mod ngscope;
 mod parse;
 mod util;
-mod math_util;
 
-use logic::model_handler::{deploy_model_handler, ModelHandlerArgs};
 use logic::cell_source::{deploy_cell_source, CellSourceArgs};
+use logic::model_handler::{deploy_model_handler, ModelHandlerArgs};
 use logic::ngscope_controller::{deploy_ngscope_controller, NgControlArgs};
 use logic::rnti_matcher::{deploy_rnti_matcher, RntiMatcherArgs};
-use logic::{WorkerChannel, MessageMetric, BUS_SIZE_METRIC};
 use logic::{
-    GeneralState, MainState, MessageCellInfo, MessageDci, MessageRnti, NgControlState,
-    RntiMatcherState, ModelState, SourceState, WorkerState, BUS_SIZE_APP_STATE, BUS_SIZE_CELL_INFO,
+    GeneralState, MainState, MessageCellInfo, MessageDci, MessageRnti, ModelState, NgControlState,
+    RntiMatcherState, SourceState, WorkerState, BUS_SIZE_APP_STATE, BUS_SIZE_CELL_INFO,
     BUS_SIZE_DCI, BUS_SIZE_RNTI, CHANNEL_SYNC_SIZE, WORKER_SLEEP_LONG_MS,
 };
+use logic::{MessageMetric, WorkerChannel, BUS_SIZE_METRIC};
 use parse::Arguments;
 use util::{determine_process_id, is_notifier, prepare_sigint_notifier, print_info, set_debug};
 
@@ -65,6 +65,7 @@ fn deploy_app(
     let rx_metric: BusReader<MessageMetric> = tx_metric.add_rx();
 
     let model_args = ModelHandlerArgs {
+        app_args: app_args.clone(),
         rx_app_state: tx_app_state.add_rx(),
         tx_model_state: all_tx_states.model,
         rx_cell_info: tx_cell_info.add_rx(),
@@ -73,24 +74,24 @@ fn deploy_app(
         tx_metric,
     };
     let rntimatcher_args = RntiMatcherArgs {
+        app_args: app_args.clone(),
         rx_app_state: tx_app_state.add_rx(),
         tx_rntimatcher_state: all_tx_states.rntimatcher,
-        app_args: app_args.clone(),
         rx_dci: tx_dci.add_rx(),
         tx_rnti,
         rx_metric,
     };
     let ngcontrol_args = NgControlArgs {
+        app_args: app_args.clone(),
         rx_app_state: tx_app_state.add_rx(),
         tx_ngcontrol_state: all_tx_states.ngcontrol,
-        app_args: app_args.clone(),
         rx_cell_info: tx_cell_info.add_rx(),
         tx_dci,
     };
     let source_args = CellSourceArgs {
+        app_args: app_args.clone(),
         rx_app_state: tx_app_state.add_rx(),
         tx_source_state: all_tx_states.source,
-        app_args: app_args.clone(),
         tx_cell_info,
     };
 

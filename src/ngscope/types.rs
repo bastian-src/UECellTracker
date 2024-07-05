@@ -129,7 +129,7 @@ impl NgScopeUeDci {
 }
 
 #[repr(C)]
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug, Default)]
 #[allow(non_snake_case)]
 pub struct NgScopeRntiDci {
     pub rnti: u16,
@@ -143,7 +143,7 @@ pub struct NgScopeRntiDci {
 }
 
 #[repr(C)]
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug, Default)]
 #[allow(non_snake_case)]
 pub struct NgScopeCellDci {
     pub cell_id: u8,
@@ -162,7 +162,7 @@ pub struct NgScopeCellDci {
 impl NgScopeCellDci {
     pub fn from_bytes(bytes: [u8; NGSCOPE_STRUCT_SIZE_CELL_DCI]) -> Result<NgScopeCellDci> {
         let cell_dci: &NgScopeCellDci = unsafe { &*bytes.as_ptr().cast() };
-        Ok(cell_dci.clone())
+        Ok(*cell_dci)
     }
 }
 
