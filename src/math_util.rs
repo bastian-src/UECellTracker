@@ -1,7 +1,5 @@
-
 use anyhow::{anyhow, Result};
-use nalgebra::{DVector, DMatrix};
-
+use nalgebra::{DMatrix, DVector};
 
 /* Feature Matching */
 

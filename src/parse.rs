@@ -28,6 +28,9 @@ pub struct Arguments {
     #[command(flatten)]
     pub rntimatching: Option<RntiMatchingArgs>,
 
+    #[command(flatten)]
+    pub model: Option<ModelArgs>,
+
     /// Print additional information in the terminal
     #[arg(short('v'), long, required = false)]
     pub verbose: Option<bool>,
@@ -143,6 +146,39 @@ pub struct FlattenedRntiMatchingArgs {
     pub matching_log_traffic: bool,
 }
 
+#[derive(Copy, Clone, PartialEq, PartialOrd, ValueEnum, Debug, Serialize, Deserialize)]
+pub enum DynamicValue {
+    FixedMs,
+    RttFactor,
+}
+
+#[derive(Args, Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ModelArgs {
+    /// Interval in which the Metric is calculated and sent to the destination
+    #[arg(long, required = false)]
+    pub model_send_metric_interval_value: Option<f64>,
+
+    /// Metric interval type (Rtt-factor or fixed)
+    #[arg(long, value_enum, required = false)]
+    pub model_send_metric_interval_type: Option<DynamicValue>,
+
+    /// Number of DCIs to base the Metric calculation on
+    #[arg(long, value_enum, required = false)]
+    pub model_metric_smoothing_size_value: Option<f64>,
+
+    /// Metric smoothing type (Rtt-factor or fixed)
+    #[arg(long, value_enum, required = false)]
+    pub model_metric_smoothing_size_type: Option<DynamicValue>,
+}
+
+#[derive(Clone, Debug)]
+pub struct FlattenedModelArgs {
+    pub model_send_metric_interval_value: f64,
+    pub model_send_metric_interval_type: DynamicValue,
+    pub model_metric_smoothing_size_value: f64,
+    pub model_metric_smoothing_size_type: DynamicValue,
+}
+
 impl default::Default for Arguments {
     fn default() -> Self {
         Arguments {
@@ -169,6 +205,12 @@ impl default::Default for Arguments {
                 matching_traffic_pattern: Some(vec![RntiMatchingTrafficPatternType::A]),
                 matching_traffic_destination: Some("1.1.1.1:53".to_string()),
                 matching_log_traffic: Some(true),
+            }),
+            model: Some(ModelArgs {
+                model_send_metric_interval_value: Some(1.0),
+                model_send_metric_interval_type: Some(DynamicValue::RttFactor),
+                model_metric_smoothing_size_value: Some(1.0),
+                model_metric_smoothing_size_type: Some(DynamicValue::RttFactor),
             }),
         }
     }
@@ -277,6 +319,19 @@ impl FlattenedRntiMatchingArgs {
             matching_traffic_pattern: rnti_args.matching_traffic_pattern.unwrap(),
             matching_traffic_destination: rnti_args.matching_traffic_destination.unwrap(),
             matching_log_traffic: rnti_args.matching_log_traffic.unwrap(),
+        })
+    }
+}
+
+impl FlattenedModelArgs {
+    pub fn from_unflattened(model_args: ModelArgs) -> Result<FlattenedModelArgs> {
+        Ok(FlattenedModelArgs {
+            model_send_metric_interval_value: model_args.model_send_metric_interval_value.unwrap(),
+            model_send_metric_interval_type: model_args.model_send_metric_interval_type.unwrap(),
+            model_metric_smoothing_size_value: model_args
+                .model_metric_smoothing_size_value
+                .unwrap(),
+            model_metric_smoothing_size_type: model_args.model_metric_smoothing_size_type.unwrap(),
         })
     }
 }

@@ -9,8 +9,8 @@ use std::time::Duration;
 
 use anyhow::{anyhow, Result};
 use bus::{Bus, BusReader};
-use serde_derive::{Deserialize, Serialize};
 use nalgebra::{DMatrix, DVector};
+use serde_derive::{Deserialize, Serialize};
 
 use crate::logic::traffic_patterns::{TrafficPattern, TrafficPatternFeatures};
 use crate::logic::{
@@ -21,8 +21,7 @@ use crate::ngscope::types::NgScopeCellDci;
 use crate::parse::{Arguments, FlattenedRntiMatchingArgs};
 
 use crate::util::{
-    CellRntiRingBuffer,
-    log_rnti_matching_traffic, print_debug, print_info, determine_process_id,
+    determine_process_id, log_rnti_matching_traffic, print_debug, print_info, CellRntiRingBuffer,
 };
 
 use crate::math_util::{
@@ -31,7 +30,6 @@ use crate::math_util::{
 };
 
 use super::{MessageMetric, MetricTypes};
-
 
 pub const MATCHING_INTERVAL_MS: u64 = 1000;
 pub const MATCHING_TRAFFIC_PATTERN_TIME_OVERLAP_FACTOR: f64 = 1.1;
@@ -51,16 +49,10 @@ pub const RNTI_RING_BUFFER_SIZE: usize = 5;
 pub const METRIC_HEADER_LENGTH: usize = 5;
 pub const METRIC_INITIAL_INDEX_START: usize = 0;
 pub const METRIC_INITIAL_INDEX_END: usize = 4;
-pub const METRIC_INITIAL: [u8; 4] = [
-    0x11,
-    0x21,
-    0x12,
-    0x22,
-];
+pub const METRIC_INITIAL: [u8; 4] = [0x11, 0x21, 0x12, 0x22];
 pub const METRIC_VERSION_INDEX: usize = 4;
 pub const METRIC_VERSION: u8 = 1;
 pub const METRIC_PAYLOAD_INDEX: usize = 5;
-
 
 /*
  * Feature vector, order matters:
@@ -98,14 +90,14 @@ pub const METRIC_PAYLOAD_INDEX: usize = 5;
 // ];
 
 pub const MATCHING_WEIGHTINGS: [f64; 8] = [
-    0.5,    /* DCI count (occurences) */
-    0.3,    /* Total UL bytes */
-    0.1,    /* UL bytes median */
-    0.020,  /* UL bytes mean */
-    0.020,  /* UL bytes variance */
-    0.020,    /* DCI time delta median */
-    0.020,  /* DCI time delta mean */
-    0.020,  /* DCI time delta variance */
+    0.5,   /* DCI count (occurences) */
+    0.3,   /* Total UL bytes */
+    0.1,   /* UL bytes median */
+    0.020, /* UL bytes mean */
+    0.020, /* UL bytes variance */
+    0.020, /* DCI time delta median */
+    0.020, /* DCI time delta mean */
+    0.020, /* DCI time delta variance */
 ];
 
 #[derive(Clone, Debug, PartialEq)]
@@ -117,18 +109,18 @@ enum LocalGeneratorState {
 }
 
 pub struct RntiMatcherArgs {
+    pub app_args: Arguments,
     pub rx_app_state: BusReader<MainState>,
     pub tx_rntimatcher_state: SyncSender<RntiMatcherState>,
-    pub app_args: Arguments,
     pub rx_dci: BusReader<MessageDci>,
     pub tx_rnti: Bus<MessageRnti>,
     pub rx_metric: BusReader<MessageMetric>,
 }
 
 struct RunArgs {
+    app_args: Arguments,
     rx_app_state: BusReader<MainState>,
     tx_rntimatcher_state: SyncSender<RntiMatcherState>,
-    app_args: Arguments,
     rx_dci: BusReader<MessageDci>,
     tx_rnti: Bus<MessageRnti>,
     tx_gen_thread_handle: Option<SyncSender<LocalGeneratorState>>,
@@ -210,16 +202,17 @@ fn run(run_args: &mut RunArgs, run_args_mov: RunArgsMovables) -> Result<()> {
 
     let matching_args =
         FlattenedRntiMatchingArgs::from_unflattened(app_args.clone().rntimatching.unwrap())?;
-    let mut cell_rnti_ring_buffer: CellRntiRingBuffer = CellRntiRingBuffer::new(RNTI_RING_BUFFER_SIZE);
+    let mut cell_rnti_ring_buffer: CellRntiRingBuffer =
+        CellRntiRingBuffer::new(RNTI_RING_BUFFER_SIZE);
     let traffic_destination = matching_args.matching_traffic_destination;
-    let traffic_pattern_list: Vec<TrafficPattern> = matching_args.matching_traffic_pattern
+    let traffic_pattern_list: Vec<TrafficPattern> = matching_args
+        .matching_traffic_pattern
         .iter()
         .map(|pattern_type| pattern_type.generate_pattern())
         .collect();
     let log_matching: bool = matching_args.matching_log_traffic;
     let mut traffic_pattern_index = 0;
     let mut matcher_state: RntiMatcherState = RntiMatcherState::Idle;
-
 
     let (tx_gen_thread, rx_gen_thread) = sync_channel::<LocalGeneratorState>(CHANNEL_SYNC_SIZE);
     run_args.gen_thread_handle = Some(deploy_traffic_generator_thread(
@@ -229,7 +222,6 @@ fn run(run_args: &mut RunArgs, run_args_mov: RunArgsMovables) -> Result<()> {
         rx_metric,
     )?);
     run_args.tx_gen_thread_handle = Some(tx_gen_thread.clone());
-
 
     loop {
         /* <precheck> */
@@ -259,13 +251,11 @@ fn run(run_args: &mut RunArgs, run_args_mov: RunArgsMovables) -> Result<()> {
                 // TODO: Use all dcis here and let this thread sleep again!
                 handle_collect_dci(latest_dcis, *traffic_collection)
             }
-            RntiMatcherState::MatchingProcessDci(traffic_collection) => {
-                handle_process_dci(
-                    *traffic_collection,
-                    &mut cell_rnti_ring_buffer,
-                    log_matching,
-                )
-            }
+            RntiMatcherState::MatchingProcessDci(traffic_collection) => handle_process_dci(
+                *traffic_collection,
+                &mut cell_rnti_ring_buffer,
+                log_matching,
+            ),
             RntiMatcherState::MatchingPublishRnti(rnti) => {
                 tx_rnti.broadcast(rnti);
                 RntiMatcherState::SleepMs(
@@ -273,10 +263,9 @@ fn run(run_args: &mut RunArgs, run_args_mov: RunArgsMovables) -> Result<()> {
                     Box::new(RntiMatcherState::StartMatching),
                 )
             }
-            RntiMatcherState::MatchingError(error_type) => handle_matching_error(
-                error_type,
-                &tx_gen_thread,
-                ),
+            RntiMatcherState::MatchingError(error_type) => {
+                handle_matching_error(error_type, &tx_gen_thread)
+            }
             RntiMatcherState::SleepMs(time_ms, next_state) => {
                 thread::sleep(Duration::from_millis(time_ms));
                 *next_state
@@ -305,19 +294,22 @@ fn handle_start_matching(
     traffic_pattern_list: &[TrafficPattern],
     traffic_pattern_index: &mut usize,
 ) -> RntiMatcherState {
-    let traffic_pattern =  traffic_pattern_list[*traffic_pattern_index].clone();
+    let traffic_pattern = traffic_pattern_list[*traffic_pattern_index].clone();
     *traffic_pattern_index = (*traffic_pattern_index + 1) % traffic_pattern_list.len();
 
     let pattern_total_ms = traffic_pattern.total_time_ms();
     let start_timestamp_ms = chrono::Utc::now().timestamp_millis() as u64;
     let finish_timestamp_ms = start_timestamp_ms
-            + (MATCHING_TRAFFIC_PATTERN_TIME_OVERLAP_FACTOR * pattern_total_ms as f64) as u64;
-    let traffic_pattern_features = match TrafficPatternFeatures::from_traffic_pattern(&traffic_pattern) {
-        Ok(features) => features,
-        Err(_) => {
-            return RntiMatcherState::MatchingError(RntiMatchingErrorType::ErrorGeneratingTrafficPatternFeatures);
-        }
-    };
+        + (MATCHING_TRAFFIC_PATTERN_TIME_OVERLAP_FACTOR * pattern_total_ms as f64) as u64;
+    let traffic_pattern_features =
+        match TrafficPatternFeatures::from_traffic_pattern(&traffic_pattern) {
+            Ok(features) => features,
+            Err(_) => {
+                return RntiMatcherState::MatchingError(
+                    RntiMatchingErrorType::ErrorGeneratingTrafficPatternFeatures,
+                );
+            }
+        };
 
     let traffic_collection: TrafficCollection = TrafficCollection {
         cell_traffic: Default::default(),
@@ -326,9 +318,7 @@ fn handle_start_matching(
         traffic_pattern_features,
     };
 
-    let _ = tx_gen_thread.send(LocalGeneratorState::SendPattern(
-        Box::new(traffic_pattern),
-    ));
+    let _ = tx_gen_thread.send(LocalGeneratorState::SendPattern(Box::new(traffic_pattern)));
     RntiMatcherState::MatchingCollectDci(Box::new(traffic_collection))
 }
 
@@ -370,12 +360,20 @@ fn handle_process_dci(
     let best_matches = match traffic_collection.find_best_matching_rnti() {
         Ok(matches) => matches,
         Err(e) => {
-            print_info(&format!("[rntimatcher] Error during handle_process_dci: {:?}", e));
-            return RntiMatcherState::MatchingError(RntiMatchingErrorType::ErrorFindingBestMatchingRnti)
+            print_info(&format!(
+                "[rntimatcher] Error during handle_process_dci: {:?}",
+                e
+            ));
+            return RntiMatcherState::MatchingError(
+                RntiMatchingErrorType::ErrorFindingBestMatchingRnti,
+            );
         }
     };
     cell_rnti_ring_buffer.update(&best_matches);
-    print_debug(&format!("DEBUG [rntimatcher] cell_rnti_ring_buffer: {:#?}", cell_rnti_ring_buffer));
+    print_debug(&format!(
+        "DEBUG [rntimatcher] cell_rnti_ring_buffer: {:#?}",
+        cell_rnti_ring_buffer
+    ));
     message_rnti.cell_rnti = cell_rnti_ring_buffer.most_frequent();
     RntiMatcherState::MatchingPublishRnti(message_rnti)
 }
@@ -384,11 +382,10 @@ fn handle_matching_error(
     error_type: RntiMatchingErrorType,
     tx_gen_thread: &SyncSender<LocalGeneratorState>,
 ) -> RntiMatcherState {
-
     match error_type {
-        RntiMatchingErrorType::ExceededDciTimestampDelta => {},
-        RntiMatchingErrorType::ErrorGeneratingTrafficPatternFeatures |
-        RntiMatchingErrorType::ErrorFindingBestMatchingRnti => {
+        RntiMatchingErrorType::ExceededDciTimestampDelta => {}
+        RntiMatchingErrorType::ErrorGeneratingTrafficPatternFeatures
+        | RntiMatchingErrorType::ErrorFindingBestMatchingRnti => {
             print_info(&format!(
                 "[rntimatcher] error during RNTI matching: {:?}\n  -> going back to Idle",
                 error_type
@@ -424,10 +421,11 @@ fn deploy_traffic_generator_thread(
 ) -> Result<JoinHandle<()>> {
     let thread = thread::spawn(move || {
         if let Err(err) = run_traffic_generator(
-                    rx_local_gen_state,
-                    local_socket_addr,
-                    destination_addr,
-                    rx_metric) {
+            rx_local_gen_state,
+            local_socket_addr,
+            destination_addr,
+            rx_metric,
+        ) {
             print_info(&format!("[rntimatcher.gen] stopped with error: {:?}", err))
         }
     });
@@ -453,7 +451,7 @@ fn run_traffic_generator(
     loop {
         match check_rx_state(&rx_local_gen_state) {
             Ok(Some(new_state)) => gen_state = new_state,
-            Ok(None) => {},
+            Ok(None) => {}
             Err(e) => {
                 print_info(&format!("{}", e));
                 break;
@@ -464,11 +462,7 @@ fn run_traffic_generator(
 
         match gen_state {
             LocalGeneratorState::Idle => {
-                gen_handle_idle(
-                    &socket,
-                    &destination_addr,
-                    metric_option,
-                )?;
+                gen_handle_idle(&socket, &destination_addr, metric_option)?;
             }
             LocalGeneratorState::Stop => {
                 break;
@@ -480,11 +474,14 @@ fn run_traffic_generator(
                     pattern,
                     &mut last_timemstamp_us,
                     metric_option,
-                    ) {
-                    Ok(Some(_)) => { /* stay in the state and keep sending */ },
+                ) {
+                    Ok(Some(_)) => { /* stay in the state and keep sending */ }
                     Ok(None) => gen_state = LocalGeneratorState::PatternSent,
                     Err(e) => {
-                        print_info(&format!("[rntimatcher.gen] Error occured while sendig the pattern: {:?}", e));
+                        print_info(&format!(
+                            "[rntimatcher.gen] Error occured while sendig the pattern: {:?}",
+                            e
+                        ));
                         gen_state = LocalGeneratorState::Stop;
                     }
                 }
@@ -521,9 +518,7 @@ fn check_rx_state(
     }
 }
 
-fn check_rx_metric(
-    rx_metric: &mut BusReader<MessageMetric>,
-) -> Result<Option<MetricTypes>> {
+fn check_rx_metric(rx_metric: &mut BusReader<MessageMetric>) -> Result<Option<MetricTypes>> {
     match rx_metric.try_recv() {
         Ok(msg) => Ok(Some(msg.metric)),
         Err(TryRecvError::Empty) => Ok(None),
@@ -534,7 +529,7 @@ fn check_rx_metric(
 fn gen_handle_idle(
     socket: &UdpSocket,
     destination: &str,
-    metric_option: Option<MetricTypes>
+    metric_option: Option<MetricTypes>,
 ) -> Result<()> {
     if let Some(metric) = metric_option {
         // add some padding to the total payload
@@ -554,7 +549,7 @@ fn gen_handle_send_pattern(
     destination: &str,
     pattern: &mut TrafficPattern,
     last_sent_timemstamp_us: &mut Option<u64>,
-    metric_option: Option<MetricTypes>
+    metric_option: Option<MetricTypes>,
 ) -> Result<Option<()>> {
     match pattern.messages.pop_front() {
         Some(msg) => {
@@ -565,7 +560,10 @@ fn gen_handle_send_pattern(
                 /* Determine time delta and adapt sleeping time */
                 let delta = now_us - *timestamp_us;
                 if delta > msg.time_ms as u64 * TIME_MS_TO_US_FACTOR {
-                    print_info(&format!("[rntimatcher.gen] sending time interval exceeded by: {:?}us", delta));
+                    print_info(&format!(
+                        "[rntimatcher.gen] sending time interval exceeded by: {:?}us",
+                        delta
+                    ));
                     sleep_us = msg.time_ms as u64 * TIME_MS_TO_US_FACTOR;
                 } else {
                     sleep_us = (msg.time_ms as u64 * TIME_MS_TO_US_FACTOR) - delta;
@@ -586,37 +584,29 @@ fn gen_handle_send_pattern(
 
             Ok(Some(()))
         }
-        None => Ok(None)
+        None => Ok(None),
     }
 }
 
-fn prepend_metric_to_payload(
-    payload: &mut [u8],
-    metric: MetricTypes,
-) -> Result<()> {
+fn prepend_metric_to_payload(payload: &mut [u8], metric: MetricTypes) -> Result<()> {
     let MetricTypes::A(metric_data) = metric;
     let metric_struct_size = mem::size_of_val(&metric_data);
     if payload.len() < (METRIC_HEADER_LENGTH + metric_struct_size) {
         return Err(anyhow!("Metric does not fit into payload"));
     }
-    payload[METRIC_INITIAL_INDEX_START..METRIC_INITIAL_INDEX_END]
-        .copy_from_slice(&METRIC_INITIAL);
+    payload[METRIC_INITIAL_INDEX_START..METRIC_INITIAL_INDEX_END].copy_from_slice(&METRIC_INITIAL);
     payload[METRIC_VERSION_INDEX] = METRIC_VERSION;
 
     let metric_data_bytes: &[u8] = unsafe { any_as_u8_slice(&metric_data) };
     let metric_in_payload_start = METRIC_INITIAL_INDEX_START;
     let metric_in_payload_end = METRIC_INITIAL_INDEX_START + metric_struct_size;
-    payload[metric_in_payload_start..metric_in_payload_end]
-        .copy_from_slice(metric_data_bytes);
+    payload[metric_in_payload_start..metric_in_payload_end].copy_from_slice(metric_data_bytes);
 
     Ok(())
 }
 
 unsafe fn any_as_u8_slice<T: Sized>(p: &T) -> &[u8] {
-    ::core::slice::from_raw_parts(
-        (p as *const T) as *const u8,
-        ::core::mem::size_of::<T>(),
-    )
+    ::core::slice::from_raw_parts((p as *const T) as *const u8, ::core::mem::size_of::<T>())
 }
 
 fn send_final_state(tx_rntimatcher_state: &SyncSender<RntiMatcherState>) -> Result<()> {
@@ -686,12 +676,15 @@ impl TrafficCollection {
      * */
     fn apply_basic_filter(&mut self) -> BasicFilterStatistics {
         let mut stats: BasicFilterStatistics = Default::default();
-        let max_total_ul =
-            (BASIC_FILTER_MAX_TOTAL_UL_FACTOR * self.traffic_pattern_features.total_ul_bytes as f64).round() as u64;
-        let min_total_ul =
-            (BASIC_FILTER_MIN_TOTAL_UL_FACTOR * self.traffic_pattern_features.total_ul_bytes as f64).round() as u64;
-        let min_occurences =
-            (BASIC_FILTER_MIN_OCCURENCES_FACTOR * self.traffic_pattern_features.nof_packets as f64).round() as u64;
+        let max_total_ul = (BASIC_FILTER_MAX_TOTAL_UL_FACTOR
+            * self.traffic_pattern_features.total_ul_bytes as f64)
+            .round() as u64;
+        let min_total_ul = (BASIC_FILTER_MIN_TOTAL_UL_FACTOR
+            * self.traffic_pattern_features.total_ul_bytes as f64)
+            .round() as u64;
+        let min_occurences = (BASIC_FILTER_MIN_OCCURENCES_FACTOR
+            * self.traffic_pattern_features.nof_packets as f64)
+            .round() as u64;
 
         // Determine which RNTIs to remove
         let to_keep: HashMap<u64, HashSet<u16>> = self
@@ -802,7 +795,8 @@ impl UeTraffic {
     pub fn generate_standardized_feature_vec(&self, std_vec: &[(f64, f64)]) -> Result<Vec<f64>> {
         let mut non_std_feature_vec = vec![];
         let (ul_median, ul_mean, ul_variance) = self.feature_ul_bytes_median_mean_variance()?;
-        let (tx_median, tx_mean, tx_variance) = self.feature_dci_time_delta_median_mean_variance()?;
+        let (tx_median, tx_mean, tx_variance) =
+            self.feature_dci_time_delta_median_mean_variance()?;
 
         non_std_feature_vec.push(self.feature_dci_count());
         non_std_feature_vec.push(self.feature_total_ul_bytes());
@@ -863,19 +857,22 @@ struct BasicFilterStatistics {
 fn feature_distance_functional(
     traffic: &HashMap<u64, CellTrafficCollection>,
     pattern_std_vec: &[(f64, f64)],
-    pattern_feature_vec: &[f64]
+    pattern_feature_vec: &[f64],
 ) -> Result<HashMap<u64, u16>> {
-    traffic.iter()
+    traffic
+        .iter()
         .map(|(&cell_id, cell_traffic)| {
-            let rnti_and_distance: Result<Vec<(u16, f64)>> = cell_traffic.traffic
+            let rnti_and_distance: Result<Vec<(u16, f64)>> = cell_traffic
+                .traffic
                 .iter()
                 .map(|(&rnti, ue_traffic)| {
-                    let std_feature_vec = ue_traffic.generate_standardized_feature_vec(pattern_std_vec)?;
+                    let std_feature_vec =
+                        ue_traffic.generate_standardized_feature_vec(pattern_std_vec)?;
                     let distance = calculate_weighted_euclidean_distance(
-                            pattern_feature_vec,
-                            &std_feature_vec,
-                            &MATCHING_WEIGHTINGS,
-                        );
+                        pattern_feature_vec,
+                        &std_feature_vec,
+                        &MATCHING_WEIGHTINGS,
+                    );
                     Ok((rnti, distance))
                 })
                 .collect::<Result<Vec<(u16, f64)>>>();
@@ -889,17 +886,20 @@ fn feature_distance_functional(
 fn feature_distance_matrices(
     traffic: &HashMap<u64, CellTrafficCollection>,
     pattern_std_vec: &[(f64, f64)],
-    pattern_feature_vec: &[f64]
+    pattern_feature_vec: &[f64],
 ) -> Result<HashMap<u64, u16>> {
     let num_features = pattern_std_vec.len();
     let weightings_vector = DVector::from_row_slice(&MATCHING_WEIGHTINGS);
 
-    traffic.iter()
+    traffic
+        .iter()
         .map(|(&cell_id, cell_traffic)| {
-            let standardized_feature_vecs: Result<Vec<Vec<f64>>> = cell_traffic.traffic
+            let standardized_feature_vecs: Result<Vec<Vec<f64>>> = cell_traffic
+                .traffic
                 .values()
                 .map(|ue_traffic| {
-                    ue_traffic.generate_standardized_feature_vec(pattern_std_vec)
+                    ue_traffic
+                        .generate_standardized_feature_vec(pattern_std_vec)
                         .map_err(|e| anyhow!(e))
                 })
                 .collect();
@@ -908,21 +908,29 @@ fn feature_distance_matrices(
             let num_vectors = standardized_feature_vecs.len();
 
             let data: Vec<f64> = standardized_feature_vecs.into_iter().flatten().collect();
-            let feature_matrix: DMatrix<f64> = DMatrix::from_row_slice(num_vectors, num_features, &data);
-            
+            let feature_matrix: DMatrix<f64> =
+                DMatrix::from_row_slice(num_vectors, num_features, &data);
+
             // Uncomment and implement debug print if needed
             // print_debug(&format!("DEBUG [rntimatcher] feature_matrix: {:.2}", feature_matrix));
-            
-            let pattern_feature_matrix = DMatrix::from_fn(num_vectors, num_features, |_, r| pattern_feature_vec[r]);
+
+            let pattern_feature_matrix =
+                DMatrix::from_fn(num_vectors, num_features, |_, r| pattern_feature_vec[r]);
             let euclidean_distances = calculate_weighted_euclidean_distance_matrix(
                 &pattern_feature_matrix,
                 &feature_matrix,
-                &weightings_vector);
-            
-            // Uncomment and implement debug print if needed
-            print_debug(&format!("DEBUG [rntimatcher] distances: {:.2}", euclidean_distances));
+                &weightings_vector,
+            );
 
-            let mut rnti_and_distance: Vec<(u16, f64)> = cell_traffic.traffic.keys()
+            // Uncomment and implement debug print if needed
+            print_debug(&format!(
+                "DEBUG [rntimatcher] distances: {:.2}",
+                euclidean_distances
+            ));
+
+            let mut rnti_and_distance: Vec<(u16, f64)> = cell_traffic
+                .traffic
+                .keys()
                 .cloned()
                 .zip(euclidean_distances.iter().cloned())
                 .collect();
@@ -933,5 +941,3 @@ fn feature_distance_matrices(
         })
         .collect::<Result<HashMap<u64, u16>>>()
 }
-
-
