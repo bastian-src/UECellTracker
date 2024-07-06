@@ -178,10 +178,11 @@ pub fn deploy_rnti_matcher(args: RntiMatcherArgs) -> Result<JoinHandle<()>> {
         rx_metric: args.rx_metric,
     };
 
-    let thread = thread::spawn(move || {
+    let builder = thread::Builder::new().name("[rntimatcher]".to_string());
+    let thread = builder.spawn(move || {
         let _ = run(&mut run_args, run_args_mov);
         finish(run_args);
-    });
+    })?;
     Ok(thread)
 }
 
@@ -733,16 +734,16 @@ impl TrafficCollection {
                         }
                         filtered
                     })
-                    /* ZERO MEDIAN */
-                    .filter(|(_, ue_traffic)| {
-                        match ue_traffic.feature_ul_bytes_median_mean_variance() {
-                            Ok((median, _, _)) if median > 0.0 => true,
-                            _ => {
-                                stats.zero_ul_median += 1;
-                                false
-                            }
-                        }
-                    })
+                    /* ZERO MEDIAN HERE: Skip the ZERO UL MEDIAN filter */
+                    // .filter(|(_, ue_traffic)| {
+                    //     match ue_traffic.feature_ul_bytes_median_mean_variance() {
+                    //         Ok((median, _, _)) if median > 0.0 => true,
+                    //         _ => {
+                    //             stats.zero_ul_median += 1;
+                    //             false
+                    //         }
+                    //     }
+                    // })
                     .map(|(&rnti, _)| rnti)
                     .collect();
                 (cell_id, rntis_to_keep)

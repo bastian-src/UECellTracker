@@ -16,8 +16,8 @@ use crate::logic::{
 };
 use crate::util::determine_process_id;
 
-pub const MAX_DCI_ARRAY_SIZE: usize = 10000;
-pub const MAX_DCI_SLICE_SIZE: usize = 1000;
+pub const MAX_DCI_ARRAY_SIZE: usize = 1000;
+pub const MAX_DCI_SLICE_SIZE: usize = 100;
 pub const MAX_DCI_SLICE_INDEX: usize = MAX_DCI_ARRAY_SIZE - MAX_DCI_SLICE_SIZE;
 // Parameter gamma from [p. 456] PBE-CC: https://dl.acm.org/doi/abs/10.1145/3387514.3405880
 pub const PHYSICAL_TO_TRANSPORT_OVERHEAD: f64 = 0.068;
@@ -52,10 +52,12 @@ impl DciRingBuffer {
         self.dci_next += 1;
     }
 
-    fn slice(&self, slice_size: usize) -> &[NgScopeCellDci] {
-        if slice_size > self.dci_next {
-            return self.slice(self.dci_next);
+    fn slice(&self, wanted_slice_size: usize) -> &[NgScopeCellDci] {
+        if wanted_slice_size == 0 || self.dci_next == 0 {
+            return &[];
         }
+
+        let slice_size = usize::min(wanted_slice_size, self.dci_next);
         let delta_index = self.dci_next - slice_size;
         &self.dci_array[delta_index..self.dci_next]
     }
@@ -94,10 +96,11 @@ pub fn deploy_model_handler(args: ModelHandlerArgs) -> Result<JoinHandle<()>> {
         tx_metric: args.tx_metric,
     };
 
-    let thread = thread::spawn(move || {
+    let builder = thread::Builder::new().name("[model]".to_string());
+    let thread = builder.spawn(move || {
         let _ = run(&mut run_args);
         finish(run_args);
-    });
+    })?;
     Ok(thread)
 }
 
@@ -107,12 +110,10 @@ fn send_final_state(tx_model_state: &SyncSender<ModelState>) -> Result<()> {
 
 fn wait_for_running(
     rx_app_state: &mut BusReader<MainState>,
-    tx_model_state: &SyncSender<ModelState>,
 ) -> Result<()> {
     match wait_until_running(rx_app_state) {
         Ok(_) => Ok(()),
         _ => {
-            send_final_state(tx_model_state)?;
             Err(anyhow!("[model] Main did not send 'Running' message"))
         }
     }
@@ -128,14 +129,16 @@ fn run(run_args: &mut RunArgs) -> Result<()> {
     let tx_metric: &mut Bus<MessageMetric> = &mut run_args.tx_metric;
 
     tx_model_state.send(ModelState::Running)?;
-    wait_for_running(rx_app_state, tx_model_state)?;
+    wait_for_running(rx_app_state)?;
     print_info(&format!("[model]: \t\tPID {:?}", determine_process_id()));
     let sleep_duration = Duration::from_micros(DEFAULT_WORKER_SLEEP_US);
 
     let model_args = FlattenedModelArgs::from_unflattened(app_args.clone().model.unwrap())?;
 
     let mut last_metric_timestamp_us: u64 = chrono::Utc::now().timestamp_micros() as u64;
+    println!(" DEBUG: Before DciRingBuffer::new()");
     let mut dci_buffer = DciRingBuffer::new();
+    println!(" DEBUG: dci_buffer.dci_array.len(): {:?}", dci_buffer.dci_array.len());
     let mut last_rnti: Option<u16> = None;
     let mut last_cell_info: Option<CellInfo> = None;
     let last_rtt_us: Option<u64> = Some(40000); // TODO: Replace test-RTT with actual RTT and make
@@ -319,7 +322,7 @@ fn translate_physcial_to_transport_simple(c_physical: u64) -> u64 {
 
 fn determine_sending_interval(model_args: &FlattenedModelArgs, last_rtt_us: &Option<u64>) -> u64 {
     match model_args.model_send_metric_interval_type {
-        DynamicValue::FixedMs => model_args.model_send_metric_interval_value as u64,
+        DynamicValue::FixedMs => model_args.model_send_metric_interval_value as u64 * 1000,
         DynamicValue::RttFactor => {
             (last_rtt_us.unwrap() as f64 * model_args.model_send_metric_interval_value) as u64
         }
@@ -332,7 +335,11 @@ fn determine_smoothing_size(model_args: &FlattenedModelArgs, last_rtt_us: &Optio
         DynamicValue::RttFactor => {
             (last_rtt_us.unwrap() as f64 * model_args.model_metric_smoothing_size_value / 1000.0) as u64
         }
+    };
+    if unbound_slice > MAX_DCI_SLICE_SIZE as u64 {
+        return MAX_DCI_SLICE_SIZE as u64;
     }
+    unbound_slice
 }
 
 #[cfg(test)]

@@ -69,10 +69,11 @@ pub fn deploy_ngscope_controller(args: NgControlArgs) -> Result<JoinHandle<()>> 
     let run_args_mov: RunArgsMovables = RunArgsMovables {
         tx_dci: args.tx_dci,
     };
-    let thread = thread::spawn(move || {
+    let builder = thread::Builder::new().name("[builder]".to_string());
+    let thread = builder.spawn(move || {
         let _ = run(&mut run_args, run_args_mov);
         finish(run_args);
-    });
+    })?;
     Ok(thread)
 }
 

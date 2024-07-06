@@ -25,14 +25,15 @@ pub struct CellSourceArgs {
 }
 
 pub fn deploy_cell_source(args: CellSourceArgs) -> Result<JoinHandle<()>> {
-    let thread = thread::spawn(move || {
+    let builder = thread::Builder::new().name("[source]".to_string());
+    let thread = builder.spawn(move || {
         let _ = run(
             args.rx_app_state,
             args.tx_source_state,
             args.app_args,
             args.tx_cell_info,
         );
-    });
+    })?;
     Ok(thread)
 }
 

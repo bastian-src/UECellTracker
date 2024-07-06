@@ -240,9 +240,12 @@ def filter_dataset_fast(settings, raw_dataset) -> FilteredRecording:
                 # print("MAX_UL_BYTES_PER_DCI")
                 continue
 
-            if calculate_median(ue_data) <= 0:
-                result.skipped_median_zero += 1
-                continue
+            # HERE: Disbale UL Median filter, because the UL-Median becomes 0
+            #       if an UE has a lot of upload.
+            # if calculate_median(ue_data) <= 0:
+            #     print_debug(f"Skipping ZERO UL MEDIAN RNTI: {rnti}")
+            #     result.skipped_median_zero += 1
+            #     continue
 
             for timestamp, values in ue_data['traffic'].items():
                 converted_timestamp = np.datetime64(int(timestamp), 'us')
