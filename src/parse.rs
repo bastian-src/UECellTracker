@@ -247,6 +247,7 @@ impl Arguments {
         self.devicepublisher = self.devicepublisher.or(config_file.devicepublisher);
         self.ngscope = self.ngscope.or(config_file.ngscope);
         self.rntimatching = self.rntimatching.or(config_file.rntimatching);
+        self.model = self.model.or(config_file.model);
         self.verbose = self.verbose.or(config_file.verbose);
 
         Ok(self)
