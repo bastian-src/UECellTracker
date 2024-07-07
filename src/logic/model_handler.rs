@@ -16,8 +16,8 @@ use crate::logic::{
 };
 use crate::util::determine_process_id;
 
-pub const MAX_DCI_ARRAY_SIZE: usize = 1000;
-pub const MAX_DCI_SLICE_SIZE: usize = 100;
+pub const MAX_DCI_ARRAY_SIZE: usize = 10000;
+pub const MAX_DCI_SLICE_SIZE: usize = 1000;
 pub const MAX_DCI_SLICE_INDEX: usize = MAX_DCI_ARRAY_SIZE - MAX_DCI_SLICE_SIZE;
 // Parameter gamma from [p. 456] PBE-CC: https://dl.acm.org/doi/abs/10.1145/3387514.3405880
 pub const PHYSICAL_TO_TRANSPORT_OVERHEAD: f64 = 0.068;
@@ -136,9 +136,7 @@ fn run(run_args: &mut RunArgs) -> Result<()> {
     let model_args = FlattenedModelArgs::from_unflattened(app_args.clone().model.unwrap())?;
 
     let mut last_metric_timestamp_us: u64 = chrono::Utc::now().timestamp_micros() as u64;
-    println!(" DEBUG: Before DciRingBuffer::new()");
     let mut dci_buffer = DciRingBuffer::new();
-    println!(" DEBUG: dci_buffer.dci_array.len(): {:?}", dci_buffer.dci_array.len());
     let mut last_rnti: Option<u16> = None;
     let mut last_cell_info: Option<CellInfo> = None;
     let last_rtt_us: Option<u64> = Some(40000); // TODO: Replace test-RTT with actual RTT and make

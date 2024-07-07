@@ -92,6 +92,7 @@ impl MessageType {
             _ => None,
         }
     }
+
     pub fn to_bytes(self) -> [u8; NGSCOPE_MESSAGE_TYPE_SIZE] {
         match self {
             MessageType::Start => [0xCC; NGSCOPE_MESSAGE_TYPE_SIZE],

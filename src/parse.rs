@@ -182,7 +182,7 @@ pub struct FlattenedModelArgs {
 impl default::Default for Arguments {
     fn default() -> Self {
         Arguments {
-            verbose: Some(false),
+            verbose: Some(true),
             cellapi: Some(CellApiConfig::Milesight),
             milesight: Some(MilesightArgs {
                 milesight_address: Some("http://127.0.0.1".to_string()),
