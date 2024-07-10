@@ -599,8 +599,8 @@ fn prepend_metric_to_payload(payload: &mut [u8], metric: MetricTypes) -> Result<
     payload[METRIC_VERSION_INDEX] = METRIC_VERSION;
 
     let metric_data_bytes: &[u8] = unsafe { any_as_u8_slice(&metric_data) };
-    let metric_in_payload_start = METRIC_INITIAL_INDEX_START;
-    let metric_in_payload_end = METRIC_INITIAL_INDEX_START + metric_struct_size;
+    let metric_in_payload_start = METRIC_PAYLOAD_INDEX;
+    let metric_in_payload_end = METRIC_PAYLOAD_INDEX + metric_struct_size;
     payload[metric_in_payload_start..metric_in_payload_end].copy_from_slice(metric_data_bytes);
 
     Ok(())
