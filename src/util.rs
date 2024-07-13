@@ -10,6 +10,7 @@ use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use crate::logger::log_info;
 use crate::logic::rnti_matcher::TrafficCollection;
 
 pub const MATCHING_LOG_FILE_PREFIX: &str = "./.logs/rnti_matching_pattern_";
@@ -123,7 +124,7 @@ pub fn determine_process_id() -> u64 {
 }
 
 pub fn print_dci(dci: crate::ngscope::types::NgScopeCellDci) {
-    Log::print_info(&format!(
+    print_info(&format!(
         "DEBUG: {:?} | {:03?} | {:03?} | {:08?} | {:08?} | {:03?} | {:03?}",
         dci.nof_rnti,
         dci.total_dl_prb,
@@ -136,12 +137,14 @@ pub fn print_dci(dci: crate::ngscope::types::NgScopeCellDci) {
 }
 
 pub fn print_info(s: &str) {
-    Log::print_info(s)
+    let _ = log_info(s);
+    // Log::print_info(s)
 }
 
 pub fn print_debug(s: &str) {
     if is_debug() {
-        Log::print_debug(s)
+        let _ = log_info(s);
+        // Log::print_debug(s)
     }
 }
 

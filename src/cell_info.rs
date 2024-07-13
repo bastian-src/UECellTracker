@@ -38,6 +38,7 @@ pub struct CellInfo {
 pub struct SingleCell {
     pub cell_id: u64,
     pub cell_type: CellularType,
+    /// Number of PRB per slot
     pub nof_prb: u16,
     pub frequency: u64,
     pub rssi: f64,

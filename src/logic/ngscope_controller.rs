@@ -9,13 +9,14 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use crate::cell_info::CellInfo;
+use crate::logger::log_dci;
 use crate::logic::{
     check_not_stopped, wait_until_running, MainState, MessageCellInfo, MessageDci, NgControlState,
     CHANNEL_SYNC_SIZE, DEFAULT_WORKER_SLEEP_MS, DEFAULT_WORKER_SLEEP_US,
 };
 use crate::ngscope;
 use crate::ngscope::config::NgScopeConfig;
-use crate::ngscope::types::Message;
+use crate::ngscope::types::{Message, NgScopeCellDci};
 use crate::ngscope::{
     ngscope_validate_server_check, ngscope_validate_server_send_initial, start_ngscope,
     stop_ngscope,
@@ -105,6 +106,8 @@ fn run(run_args: &mut RunArgs, run_args_mov: RunArgsMovables) -> Result<()> {
         tx_dci,
         ng_args.ng_local_addr.to_string(),
         ng_args.ng_server_addr.to_string(),
+        ng_args.ng_log_dci,
+        ng_args.ng_log_dci_batch_size,
     )?);
     run_args.tx_dci_thread_handle = Some(tx_dci_thread.clone());
 
@@ -254,6 +257,8 @@ fn deploy_dci_fetcher_thread(
     tx_dci: Bus<MessageDci>,
     local_socket_addr: String,
     ng_server_addr: String,
+    is_log_dci: bool,
+    log_dci_batch_size: u64,
 ) -> Result<JoinHandle<()>> {
     let thread = thread::spawn(move || {
         let _ = run_dci_fetcher(
@@ -262,6 +267,8 @@ fn deploy_dci_fetcher_thread(
             tx_dci,
             local_socket_addr,
             ng_server_addr,
+            is_log_dci,
+            log_dci_batch_size,
         );
     });
     Ok(thread)
@@ -273,6 +280,8 @@ fn run_dci_fetcher(
     mut tx_dci: Bus<MessageDci>,
     local_socket_addr: String,
     ng_server_addr: String,
+    is_log_dci: bool,
+    log_dci_batch_size: u64,
 ) -> Result<()> {
     let socket = init_dci_server(&local_socket_addr)?;
     let mut dci_state: LocalDciState = LocalDciState::ListenForDci;
@@ -281,6 +290,7 @@ fn run_dci_fetcher(
         determine_process_id()
     ));
 
+    let mut log_dci_buffer: Vec<NgScopeCellDci> = Vec::with_capacity(2 * log_dci_batch_size as usize);
     let sleep_duration = Duration::from_micros(DEFAULT_WORKER_SLEEP_US);
     let mut last_dci_timestamp_us: u64 = 0;
 
@@ -317,7 +327,8 @@ fn run_dci_fetcher(
                 };
             }
             LocalDciState::ListenForDci => {
-                check_ngscope_message(&socket, &mut tx_dci, &mut last_dci_timestamp_us)
+                check_ngscope_message(&socket, &mut tx_dci, &mut last_dci_timestamp_us, &is_log_dci, &mut log_dci_buffer);
+                check_log_dci(&is_log_dci, &mut log_dci_buffer, &log_dci_batch_size);
             }
         }
     }
@@ -328,6 +339,8 @@ fn check_ngscope_message(
     socket: &UdpSocket,
     tx_dci: &mut Bus<MessageDci>,
     last_dci_timestamp_us: &mut u64,
+    is_log_dci: &bool,
+    log_dci_buffer: &mut Vec<NgScopeCellDci>,
 ) {
     match ngscope::ngscope_recv_single_message(socket) {
         Ok(msg) => {
@@ -356,6 +369,9 @@ fn check_ngscope_message(
                     let message_dci = MessageDci {
                         ngscope_dci: *cell_dci,
                     };
+                    if *is_log_dci {
+                        log_dci_buffer.push(*cell_dci.clone());
+                    }
                     match tx_dci.try_broadcast(message_dci) {
                         Ok(_) => {}
                         Err(msg) => {
@@ -382,6 +398,18 @@ fn check_ngscope_message(
         }
     }
 }
+
+fn check_log_dci(
+    is_log_dci: &bool,
+    log_dci_buffer: &mut Vec<NgScopeCellDci>,
+    log_dci_batch_size: &u64
+) {
+    if *is_log_dci && log_dci_buffer.len() >= *log_dci_batch_size as usize {
+        let _ = log_dci(log_dci_buffer.clone());
+        log_dci_buffer.clear()
+    }
+}
+
 
 /*  --------------  */
 /*      Helpers     */
