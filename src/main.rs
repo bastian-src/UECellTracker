@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Result};
 use bus::{Bus, BusReader};
 use casual_logger::{Level, Log};
+use logger::{deploy_logger, LoggerArgs, LoggerState};
 use std::collections::HashSet;
 use std::error::Error;
 use std::fs;
@@ -11,6 +12,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 mod cell_info;
+mod logger;
 mod logic;
 mod math_util;
 mod ngscope;
@@ -35,6 +37,7 @@ struct CombinedReceivers {
     pub source: Receiver<SourceState>,
     pub rntimatcher: Receiver<RntiMatcherState>,
     pub ngcontrol: Receiver<NgControlState>,
+    pub logger: Receiver<LoggerState>,
 }
 
 struct CombinedSenders {
@@ -42,6 +45,7 @@ struct CombinedSenders {
     pub source: SyncSender<SourceState>,
     pub rntimatcher: SyncSender<RntiMatcherState>,
     pub ngcontrol: SyncSender<NgControlState>,
+    pub logger: SyncSender<LoggerState>,
 }
 
 impl CombinedReceivers {
@@ -50,6 +54,7 @@ impl CombinedReceivers {
         let _ = &self.model.worker_print_on_recv();
         let _ = &self.ngcontrol.worker_print_on_recv();
         let _ = &self.rntimatcher.worker_print_on_recv();
+        let _ = &self.logger.worker_print_on_recv();
     }
 }
 
@@ -64,6 +69,11 @@ fn deploy_app(
     let mut tx_metric: Bus<MessageMetric> = Bus::<MessageMetric>::new(BUS_SIZE_METRIC);
     let rx_metric: BusReader<MessageMetric> = tx_metric.add_rx();
 
+    let logger_args = LoggerArgs {
+        app_args: app_args.clone(),
+        rx_app_state: tx_app_state.add_rx(),
+        tx_logger_state: all_tx_states.logger,
+    };
     let model_args = ModelHandlerArgs {
         app_args: app_args.clone(),
         rx_app_state: tx_app_state.add_rx(),
@@ -100,6 +110,7 @@ fn deploy_app(
         deploy_cell_source(source_args)?,
         deploy_model_handler(model_args)?,
         deploy_rnti_matcher(rntimatcher_args)?,
+        deploy_logger(logger_args)?,
     ];
     Ok(tasks)
 }
@@ -136,9 +147,10 @@ fn wait_all_running(
 ) -> Result<()> {
     print_info("[ ] waiting for all threads to become ready");
 
-    let mut waiting_for: HashSet<&str> = vec!["source", "model", "rntimatcher", "ngcontrol"]
-        .into_iter()
-        .collect();
+    let mut waiting_for: HashSet<&str> =
+        vec!["source", "model", "rntimatcher", "ngcontrol", "logger"]
+            .into_iter()
+            .collect();
 
     while !waiting_for.is_empty() {
         if is_notifier(sigint_notifier) {
@@ -164,6 +176,11 @@ fn wait_all_running(
         if waiting_for.contains("ngcontrol") {
             if let Ok(Some(_)) = check_running(&all_rx_states.ngcontrol) {
                 waiting_for.remove("ngcontrol");
+            }
+        }
+        if waiting_for.contains("logger") {
+            if let Ok(Some(_)) = check_running(&all_rx_states.logger) {
+                waiting_for.remove("logger");
             }
         }
     }
@@ -192,17 +209,20 @@ fn main() -> Result<(), Box<dyn Error>> {
     let (source_tx, source_rx) = sync_channel::<SourceState>(CHANNEL_SYNC_SIZE);
     let (rntimatcher_tx, rntimatcher_rx) = sync_channel::<RntiMatcherState>(CHANNEL_SYNC_SIZE);
     let (ngcontrol_tx, ngcontrol_rx) = sync_channel::<NgControlState>(CHANNEL_SYNC_SIZE);
+    let (logger_tx, logger_rx) = sync_channel::<LoggerState>(CHANNEL_SYNC_SIZE);
     let all_tx_states = CombinedSenders {
         model: model_tx,
         source: source_tx,
         rntimatcher: rntimatcher_tx,
         ngcontrol: ngcontrol_tx,
+        logger: logger_tx,
     };
     let all_rx_states = CombinedReceivers {
         model: model_rx,
         source: source_rx,
         rntimatcher: rntimatcher_rx,
         ngcontrol: ngcontrol_rx,
+        logger: logger_rx,
     };
 
     let tasks = deploy_app(&mut tx_app_state, &args, all_tx_states)?;

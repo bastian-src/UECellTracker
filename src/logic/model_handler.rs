@@ -1,4 +1,5 @@
 use crate::cell_info::CellInfo;
+use crate::logger::log_metric;
 use crate::ngscope::types::{NgScopeCellDci, NgScopeRntiDci};
 use crate::parse::{Arguments, DynamicValue, FlattenedModelArgs};
 use crate::util::{print_debug, print_info};
@@ -8,13 +9,16 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use anyhow::{anyhow, Result};
+use serde_derive::{Deserialize, Serialize};
 use bus::{Bus, BusReader};
+
 
 use crate::logic::{
     check_not_stopped, wait_until_running, MainState, MessageCellInfo, MessageDci, MessageMetric,
     MessageRnti, ModelState, DEFAULT_WORKER_SLEEP_US,
 };
 use crate::util::determine_process_id;
+use super::{MetricA, MetricTypes};
 
 pub const MAX_DCI_ARRAY_SIZE: usize = 10000;
 pub const MAX_DCI_SLICE_SIZE: usize = 1000;
@@ -22,6 +26,7 @@ pub const MAX_DCI_SLICE_INDEX: usize = MAX_DCI_ARRAY_SIZE - MAX_DCI_SLICE_SIZE;
 // Parameter gamma from [p. 456] PBE-CC: https://dl.acm.org/doi/abs/10.1145/3387514.3405880
 pub const PHYSICAL_TO_TRANSPORT_OVERHEAD: f64 = 0.068;
 pub const PHYSICAL_TO_TRANSPORT_FACTOR: f64 = 1.0 - PHYSICAL_TO_TRANSPORT_OVERHEAD;
+pub const STANDARD_NOF_PRB_SLOT_TO_SUBFRAME: u64 = 2;
 
 struct DciRingBuffer {
     dci_array: Box<[NgScopeCellDci]>,
@@ -63,7 +68,34 @@ impl DciRingBuffer {
     }
 }
 
-use super::{MetricA, MetricTypes};
+#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
+pub struct MetricResult {
+    pub transport_fair_share_capacity: u64,
+    pub physical_fair_share_capacity: u64,
+    pub physical_rate_bit_per_prb: u64,
+    /// If 1, all RNTIs are used to determine the bit/PRB rate (more general)
+    /// If 0, only the target-RNTI PRBs are used to determine the bit/PRB rate (more specific)
+    pub physical_rate_coarse_flag: u8,
+    pub nof_retransmissions: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
+pub struct MetricBasis {
+    pub nof_dci: u64,
+    pub p_cell: u64,
+    pub nof_rnti: u64,
+    pub p_alloc: u64,
+    pub tbs_alloc: u64,
+    pub target_rnti: u16,
+    pub tbs_alloc_rnti: u64,
+    pub p_alloc_rnti: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
+pub struct LogMetric {
+    result: MetricResult,
+    basis: MetricBasis,
+}
 
 pub struct ModelHandlerArgs {
     pub app_args: Arguments,
@@ -83,6 +115,22 @@ struct RunArgs {
     pub rx_dci: BusReader<MessageDci>,
     pub rx_rnti: BusReader<MessageRnti>,
     pub tx_metric: Bus<MessageMetric>,
+}
+
+struct RunParameters<'a> {
+    tx_metric: &'a mut Bus<MessageMetric>,
+    dci_buffer: &'a DciRingBuffer,
+    rnti: u16,
+    cell_info: &'a CellInfo,
+    is_log_metric: &'a bool,
+}
+
+struct RunParametersSendingBehavior<'a> {
+    metric_sending_interval_us: &'a mut u64,
+    metric_smoothing_size_ms: &'a mut u64,
+    last_metric_timestamp_us: &'a mut u64,
+    model_args: &'a FlattenedModelArgs,
+    last_rtt_us: &'a Option<u64>,
 }
 
 pub fn deploy_model_handler(args: ModelHandlerArgs) -> Result<JoinHandle<()>> {
@@ -108,14 +156,10 @@ fn send_final_state(tx_model_state: &SyncSender<ModelState>) -> Result<()> {
     Ok(tx_model_state.send(ModelState::Stopped)?)
 }
 
-fn wait_for_running(
-    rx_app_state: &mut BusReader<MainState>,
-) -> Result<()> {
+fn wait_for_running(rx_app_state: &mut BusReader<MainState>) -> Result<()> {
     match wait_until_running(rx_app_state) {
         Ok(_) => Ok(()),
-        _ => {
-            Err(anyhow!("[model] Main did not send 'Running' message"))
-        }
+        _ => Err(anyhow!("[model] Main did not send 'Running' message")),
     }
 }
 
@@ -135,6 +179,7 @@ fn run(run_args: &mut RunArgs) -> Result<()> {
 
     let model_args = FlattenedModelArgs::from_unflattened(app_args.clone().model.unwrap())?;
 
+    let is_log_metric: bool = model_args.model_log_metric;
     let mut last_metric_timestamp_us: u64 = chrono::Utc::now().timestamp_micros() as u64;
     let mut dci_buffer = DciRingBuffer::new();
     let mut last_rnti: Option<u16> = None;
@@ -183,40 +228,23 @@ fn run(run_args: &mut RunArgs) -> Result<()> {
             let delta_last_metric_sent_us =
                 chrono::Utc::now().timestamp_micros() as u64 - last_metric_timestamp_us;
             if delta_last_metric_sent_us > metric_sending_interval_us {
-                let buffer_slice_size: usize = metric_smoothing_size_ms as usize;
-                let buffer_slice = dci_buffer.slice(buffer_slice_size);
-                if !buffer_slice.is_empty() {
-                    if let Ok((capacity_physical, phy_rate, phy_rate_flag, re_tx)) = calculate_capacity(rnti, &cell_info, buffer_slice) {
-                        let capacity_transport = translate_physcial_to_transport_simple(capacity_physical);
-                        print_debug(&format!("DEBUG [model] model:
-                                             capacity: \t{:?}
-                                             phy rate: \t{:?}
-                                             phy flag: \t{:?}
-                                             re-tx: \t{:?}", capacity_physical, phy_rate, phy_rate_flag, re_tx));
-                        let now_us = chrono::Utc::now().timestamp_micros() as u64;
-                        tx_metric.broadcast(MessageMetric {
-                            metric: MetricTypes::A(MetricA {
-                                timestamp_us: now_us,
-                                fair_share_send_rate: capacity_transport,
-                                latest_dci_timestamp_us: buffer_slice.first().unwrap().time_stamp,
-                                oldest_dci_timestamp_us: buffer_slice.last().unwrap().time_stamp,
-                                nof_dci: buffer_slice.len() as u16,
-                                nof_re_tx: re_tx as u16,
-                                flag_phy_rate_all_rnti: phy_rate_flag,
-                                phy_rate, // TODO: Check whether it is reasonable to make this
-                                          // u16/u32
-                            }),
-                        });
-                    }
-                    last_metric_timestamp_us = chrono::Utc::now().timestamp_micros() as u64;
-                    metric_sending_interval_us =
-                        determine_sending_interval(&model_args, &last_rtt_us);
-                    metric_smoothing_size_ms = determine_smoothing_size(&model_args, &last_rtt_us);
-                } else {
-                    print_debug("DEBUG [model] skipping metric calculation, dci slice is 0");
-                }
+                let mut run_params = RunParameters {
+                    tx_metric,
+                    dci_buffer: &dci_buffer,
+                    rnti,
+                    cell_info: &cell_info,
+                    is_log_metric: &is_log_metric,
+                };
+
+                let mut sending_behavior = RunParametersSendingBehavior {
+                    metric_sending_interval_us: &mut metric_sending_interval_us,
+                    metric_smoothing_size_ms: &mut metric_smoothing_size_ms,
+                    last_metric_timestamp_us: &mut last_metric_timestamp_us,
+                    model_args: &model_args,
+                    last_rtt_us: &last_rtt_us,
+                };
+                handle_calculate_metric(&mut run_params, &mut sending_behavior);
             }
-            // TODO: Log the else case.
         }
     }
 
@@ -227,24 +255,106 @@ fn finish(run_args: RunArgs) {
     let _ = send_final_state(&run_args.tx_model_state);
 }
 
+
+fn handle_calculate_metric(
+    run_params: &mut RunParameters,
+    sending_behavior: &mut RunParametersSendingBehavior,
+) {
+    // Use the fields from the structs
+    let RunParameters {
+        tx_metric,
+        dci_buffer,
+        rnti,
+        cell_info,
+        is_log_metric,
+    } = run_params;
+
+    let RunParametersSendingBehavior {
+        metric_sending_interval_us,
+        metric_smoothing_size_ms,
+        last_metric_timestamp_us,
+        model_args,
+        last_rtt_us,
+    } = sending_behavior;
+
+    let buffer_slice_size: usize = **metric_smoothing_size_ms as usize;
+    let buffer_slice = dci_buffer.slice(buffer_slice_size);
+    if !buffer_slice.is_empty() {
+
+        if let Ok(metric_wrapper) = calculate_capacity(*rnti, cell_info, buffer_slice, is_log_metric) {
+            let transport_capacity = metric_wrapper.result.transport_fair_share_capacity;
+            let physical_rate_flag = metric_wrapper.result.physical_rate_coarse_flag;
+            let physical_rate = metric_wrapper.result.physical_rate_bit_per_prb;
+            let re_transmissions = metric_wrapper.result.nof_retransmissions;
+            let now_us = chrono::Utc::now().timestamp_micros() as u64;
+
+            tx_metric.broadcast(MessageMetric {
+                metric: MetricTypes::A(MetricA {
+                    timestamp_us: now_us,
+                    fair_share_send_rate: transport_capacity,
+                    latest_dci_timestamp_us: buffer_slice.first().unwrap().time_stamp,
+                    oldest_dci_timestamp_us: buffer_slice.last().unwrap().time_stamp,
+                    nof_dci: buffer_slice.len() as u16,
+                    nof_re_tx: re_transmissions as u16,
+                    flag_phy_rate_all_rnti: physical_rate_flag,
+                    phy_rate: physical_rate,
+                }),
+            });
+        }
+        **last_metric_timestamp_us = chrono::Utc::now().timestamp_micros() as u64;
+        **metric_sending_interval_us =
+            determine_sending_interval(model_args, last_rtt_us);
+        **metric_smoothing_size_ms = determine_smoothing_size(model_args, last_rtt_us);
+    } else {
+        print_debug("DEBUG [model] skipping metric calculation, dci slice is 0");
+    }
+}
+
+fn calculate_capacity(
+    target_rnti: u16,
+    cell_info: &CellInfo,
+    dci_list: &[NgScopeCellDci],
+    is_log_metric: &bool,
+) -> Result<LogMetric> {
+    let metric_wrapper = calculate_pbe_cc_capacity(target_rnti, cell_info, dci_list)?;
+    if *is_log_metric {
+        let _ = log_metric(metric_wrapper.clone());
+    }
+    print_debug(&format!(
+                "DEBUG [model] model:
+                                 c_t:      \t{:?}
+                                 c_p:      \t{:?}
+                                 phy rate: \t{:?}
+                                 phy flag: \t{:?}
+                                 re-tx:    \t{:?}",
+                metric_wrapper.result.transport_fair_share_capacity,
+                metric_wrapper.result.physical_fair_share_capacity,
+                metric_wrapper.result.physical_rate_bit_per_prb,
+                metric_wrapper.result.physical_rate_coarse_flag,
+                metric_wrapper.result.nof_retransmissions,
+            ));
+    Ok(metric_wrapper)
+}
+
 /*
  * PHY-Layer fair-share capacity in bit/ms in downlink
  * (capacity, bit/PRB ratio, re-transmissions)
  *
  * According to PBE-CC: https://dl.acm.org/doi/abs/10.1145/3387514.3405880
  * */
-fn calculate_capacity(
+fn calculate_pbe_cc_capacity(
     target_rnti: u16,
     cell_info: &CellInfo,
-    dci_list: &[NgScopeCellDci]
-) -> Result<(u64, u64, u8, u64)> {
+    dci_list: &[NgScopeCellDci],
+) -> Result<LogMetric> {
     let nof_dci: u64 = dci_list.len() as u64;
-    if nof_dci == 0  {
+    if nof_dci == 0 {
         return Err(anyhow!("Cannot calculate capacity with 0 DCI"));
     }
-    let p_cell: f64 = cell_info.cells[0].nof_prb as f64 * nof_dci as f64;
+    // Total number of PRBs in a subframe, that the cell can offer
+    let p_cell: u64 = STANDARD_NOF_PRB_SLOT_TO_SUBFRAME * cell_info.cells[0].nof_prb as u64 * nof_dci;
 
-    let nof_rnti: f64 = dci_list
+    let nof_rnti: u64 = dci_list
         .iter()
         .flat_map(|dci| {
             dci.rnti_list
@@ -254,45 +364,40 @@ fn calculate_capacity(
                 .map(|rnti_dci| rnti_dci.rnti)
         })
         .collect::<HashSet<u16>>()
-        .len() as f64;
+        .len() as u64;
 
-    let p_alloc: u64 = dci_list
-        .iter()
-        .map(|dci| dci.total_dl_prb as u64)
-        .sum();
+    let p_alloc: u64 = dci_list.iter().map(|dci| dci.total_dl_prb as u64).sum();
 
-    let tbs_alloc: u64 = dci_list
-        .iter()
-        .map(|dci| dci.total_dl_tbs )
-        .sum();
+    let tbs_alloc: u64 = dci_list.iter().map(|dci| dci.total_dl_tbs).sum();
 
     let target_rnti_dci_list: Vec<&NgScopeRntiDci> = dci_list
         .iter()
         .flat_map(|dci| {
             dci.rnti_list
-                  .iter()
-                  .take(dci.nof_rnti as usize)
-                  .filter(|rnti_dci| rnti_dci.rnti == target_rnti)
-                  .filter(|rnti_dci| rnti_dci.dl_prb > 0)
+                .iter()
+                .take(dci.nof_rnti as usize)
+                .filter(|rnti_dci| rnti_dci.rnti == target_rnti)
+                .filter(|rnti_dci| rnti_dci.dl_prb > 0)
         })
         .collect::<Vec<&NgScopeRntiDci>>();
 
     let re_tx: u64 = target_rnti_dci_list
         .iter()
-        .map(|target_rnti_dci| target_rnti_dci.dl_reTx as u64 )
+        .map(|target_rnti_dci| target_rnti_dci.dl_reTx as u64)
         .sum::<u64>();
 
     let tbs_alloc_rnti: u64 = target_rnti_dci_list
         .iter()
-        .map(|target_rnti_dci| target_rnti_dci.dl_tbs as u64 )
+        .map(|target_rnti_dci| target_rnti_dci.dl_tbs as u64)
         .sum::<u64>();
 
     let p_alloc_rnti: u64 = target_rnti_dci_list
         .iter()
-        .map(|target_rnti_dci| target_rnti_dci.dl_prb as u64 )
+        .map(|target_rnti_dci| target_rnti_dci.dl_prb as u64)
         .sum::<u64>();
 
-    print_debug(&format!("DEBUG [model] parameters:
+    print_debug(&format!(
+        "DEBUG [model] parameters:
                          nof_dci: \t\t{:?}
                          p_cell: \t\t{:?}
                          nof_rnti: \t\t{:?}
@@ -300,18 +405,40 @@ fn calculate_capacity(
                          p_alloc_rnti: \t\t{:?}
                          tbs_alloc_rnti: \t{:?}
                          re_tx: \t\t{:?}",
-                         nof_dci, p_cell, nof_rnti, p_alloc, p_alloc_rnti, tbs_alloc_rnti, re_tx));
-    let mut flag_phy_rate_all_rnti: u8 = 0;
+        nof_dci, p_cell, nof_rnti, p_alloc, p_alloc_rnti, tbs_alloc_rnti, re_tx
+    ));
+    let mut r_w_coarse_flag: u8 = 0;
     // [bit/PRB]
     let r_w: u64 = if p_alloc_rnti == 0 {
-        flag_phy_rate_all_rnti = 1;
+        r_w_coarse_flag = 1;
         8 * tbs_alloc / p_alloc
     } else {
         8 * tbs_alloc_rnti / p_alloc_rnti
     };
-    let p_idle: f64 = p_cell - p_alloc as f64; 
-    let c_p: u64 = ((r_w as f64 * (p_alloc_rnti as f64 + (p_idle / nof_rnti))) / nof_dci as f64) as u64;
-    Ok((c_p, r_w, flag_phy_rate_all_rnti, re_tx))
+    let p_idle: f64 = p_cell as f64 - p_alloc as f64;
+    let c_p: u64 =
+        ((r_w as f64 * (p_alloc_rnti as f64 + (p_idle / nof_rnti as f64))) / nof_dci as f64) as u64;
+    let c_t = translate_physcial_to_transport_simple(c_p);
+
+    Ok(LogMetric {
+        result: MetricResult {
+            physical_fair_share_capacity: c_p,
+            transport_fair_share_capacity: c_t,
+            physical_rate_bit_per_prb: r_w,
+            physical_rate_coarse_flag: r_w_coarse_flag,
+            nof_retransmissions: re_tx,
+        },
+        basis: MetricBasis {
+            nof_dci,
+            p_cell,
+            nof_rnti,
+            p_alloc,
+            tbs_alloc,
+            target_rnti,
+            tbs_alloc_rnti,
+            p_alloc_rnti,
+        }
+    })
 }
 
 fn translate_physcial_to_transport_simple(c_physical: u64) -> u64 {
@@ -331,7 +458,8 @@ fn determine_smoothing_size(model_args: &FlattenedModelArgs, last_rtt_us: &Optio
     let unbound_slice = match model_args.model_metric_smoothing_size_type {
         DynamicValue::FixedMs => model_args.model_metric_smoothing_size_value as u64,
         DynamicValue::RttFactor => {
-            (last_rtt_us.unwrap() as f64 * model_args.model_metric_smoothing_size_value / 1000.0) as u64
+            (last_rtt_us.unwrap() as f64 * model_args.model_metric_smoothing_size_value / 1000.0)
+                as u64
         }
     };
     if unbound_slice > MAX_DCI_SLICE_SIZE as u64 {
@@ -342,8 +470,11 @@ fn determine_smoothing_size(model_args: &FlattenedModelArgs, last_rtt_us: &Optio
 
 #[cfg(test)]
 mod tests {
-    use crate::{ngscope::types::{NgScopeRntiDci, NGSCOPE_MAX_NOF_RNTI}, cell_info::SingleCell};
     use super::*;
+    use crate::{
+        cell_info::SingleCell,
+        ngscope::types::{NgScopeRntiDci, NGSCOPE_MAX_NOF_RNTI},
+    };
 
     fn dummy_rnti_dci(nof_rnti: u8) -> [NgScopeRntiDci; NGSCOPE_MAX_NOF_RNTI] {
         let mut rnti_list = [NgScopeRntiDci::default(); NGSCOPE_MAX_NOF_RNTI];
@@ -383,15 +514,16 @@ mod tests {
     fn test_capacity() -> Result<()> {
         let dummy_rnti: u16 = 123;
         let dummy_cell_info = CellInfo {
-            cells: vec![
-                SingleCell {
-                    nof_prb: 100,
-                    ..Default::default()
-                }
-            ]
+            cells: vec![SingleCell {
+                nof_prb: 100,
+                ..Default::default()
+            }],
         };
-        let actual_capacity = calculate_capacity(dummy_rnti, &dummy_cell_info, &dummy_dci_slice())?;
-        assert_eq!(actual_capacity, (129706, 512 * 8, 0, 0));
+        let metric_params = calculate_capacity(dummy_rnti, &dummy_cell_info, &dummy_dci_slice(), &false)?;
+        assert_eq!(metric_params.result.physical_fair_share_capacity, 266240);
+        assert_eq!(metric_params.result.physical_rate_bit_per_prb, 512 * 8);
+        assert_eq!(metric_params.result.physical_rate_coarse_flag, 0);
+        assert_eq!(metric_params.result.nof_retransmissions, 0);
         Ok(())
     }
 }

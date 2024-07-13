@@ -6,6 +6,8 @@ use std::{default, error::Error, path::PathBuf};
 
 use crate::{logic::traffic_patterns::RntiMatchingTrafficPatternType, util::print_debug};
 
+pub const DEFAULT_LOG_BASE_DIR: &str = "./.logs/";
+
 #[derive(Debug, Clone, PartialEq, Parser, Serialize, Deserialize)]
 #[command(author, version, about, long_about = None, next_line_help = true)]
 #[command(propagate_version = true)]
@@ -30,6 +32,9 @@ pub struct Arguments {
 
     #[command(flatten)]
     pub model: Option<ModelArgs>,
+
+    #[command(flatten)]
+    pub log: Option<LogArgs>,
 
     /// Print additional information in the terminal
     #[arg(short('v'), long, required = false)]
@@ -108,6 +113,14 @@ pub struct NgScopeArgs {
     /// If true, UE Cell Tracker starts its own NG-Scope instance
     #[arg(long, required = false)]
     pub ng_start_process: Option<bool>,
+
+    /// Log DCI and general cell data information
+    #[arg(long, required = false)]
+    pub ng_log_dci: Option<bool>,
+
+    /// Determine the number of DCIs contained in a single log file
+    #[arg(long, required = false)]
+    pub ng_log_dci_batch_size: Option<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -117,6 +130,8 @@ pub struct FlattenedNgScopeArgs {
     pub ng_server_addr: String,
     pub ng_log_file: Option<String>,
     pub ng_start_process: bool,
+    pub ng_log_dci: bool,
+    pub ng_log_dci_batch_size: u64,
 }
 
 #[derive(Args, Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -133,7 +148,7 @@ pub struct RntiMatchingArgs {
     #[arg(long, required = false)]
     pub matching_traffic_destination: Option<String>,
 
-    /// Log traffic used for matching (in ./logs/rnti_matching*.jsonl)
+    /// Log RNTI matching traffic and features
     #[arg(long, required = false)]
     pub matching_log_traffic: Option<bool>,
 }
@@ -169,6 +184,10 @@ pub struct ModelArgs {
     /// Metric smoothing type (Rtt-factor or fixed)
     #[arg(long, value_enum, required = false)]
     pub model_metric_smoothing_size_type: Option<DynamicValue>,
+
+    /// Log Metric and calculation basis
+    #[arg(long, required = false)]
+    pub model_log_metric: Option<bool>,
 }
 
 #[derive(Clone, Debug)]
@@ -177,6 +196,19 @@ pub struct FlattenedModelArgs {
     pub model_send_metric_interval_type: DynamicValue,
     pub model_metric_smoothing_size_value: f64,
     pub model_metric_smoothing_size_type: DynamicValue,
+    pub model_log_metric: bool,
+}
+
+#[derive(Args, Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LogArgs {
+    /// Base directory for logging
+    #[arg(long, required = false)]
+    pub log_base_dir: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct FlattenedLogArgs {
+    pub log_base_dir: String,
 }
 
 impl default::Default for Arguments {
@@ -199,6 +231,8 @@ impl default::Default for Arguments {
                 ng_server_addr: Some("0.0.0.0:6767".to_string()),
                 ng_log_file: Some("./.ng_scope_log.txt".to_string()),
                 ng_start_process: Some(true),
+                ng_log_dci: Some(true),
+                ng_log_dci_batch_size: Some(60000),
             }),
             rntimatching: Some(RntiMatchingArgs {
                 matching_local_addr: Some("0.0.0.0:9292".to_string()),
@@ -211,6 +245,10 @@ impl default::Default for Arguments {
                 model_send_metric_interval_type: Some(DynamicValue::RttFactor),
                 model_metric_smoothing_size_value: Some(1.0),
                 model_metric_smoothing_size_type: Some(DynamicValue::RttFactor),
+                model_log_metric: Some(true),
+            }),
+            log: Some(LogArgs {
+                log_base_dir: Some(DEFAULT_LOG_BASE_DIR.to_string()),
             }),
         }
     }
@@ -248,6 +286,7 @@ impl Arguments {
         self.ngscope = self.ngscope.or(config_file.ngscope);
         self.rntimatching = self.rntimatching.or(config_file.rntimatching);
         self.model = self.model.or(config_file.model);
+        self.log = self.log.or(config_file.log);
         self.verbose = self.verbose.or(config_file.verbose);
 
         Ok(self)
@@ -309,6 +348,8 @@ impl FlattenedNgScopeArgs {
             ng_server_addr: ng_args.ng_server_addr.unwrap(),
             ng_start_process: ng_args.ng_start_process.unwrap(),
             ng_log_file: ng_args.ng_log_file,
+            ng_log_dci: ng_args.ng_log_dci.unwrap(),
+            ng_log_dci_batch_size: ng_args.ng_log_dci_batch_size.unwrap(),
         })
     }
 }
@@ -333,6 +374,15 @@ impl FlattenedModelArgs {
                 .model_metric_smoothing_size_value
                 .unwrap(),
             model_metric_smoothing_size_type: model_args.model_metric_smoothing_size_type.unwrap(),
+            model_log_metric: model_args.model_log_metric.unwrap(),
+        })
+    }
+}
+
+impl FlattenedLogArgs {
+    pub fn from_unflattened(log_args: LogArgs) -> Result<FlattenedLogArgs> {
+        Ok(FlattenedLogArgs {
+            log_base_dir: log_args.log_base_dir.unwrap(),
         })
     }
 }

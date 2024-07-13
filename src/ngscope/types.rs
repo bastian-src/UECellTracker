@@ -7,13 +7,13 @@ pub const NOF_VALIDATE_SUCCESS: usize = 2;
 pub const NGSCOPE_REMOTE_BUFFER_SIZE: usize = 1400; // ngscope sending buffer size
                                                     // taken from: ngscope/hdr/dciLib/dci_sink_def.h
 pub const NGSCOPE_MAX_NOF_CELL: usize = 4; // ngscope max nof cells per station
-pub const NGSCOPE_MAX_NOF_RNTI: usize = 20;
+pub const NGSCOPE_MAX_NOF_RNTI: usize = 40;
 
 pub const NGSCOPE_MESSAGE_TYPE_SIZE: usize = 4;
 pub const NGSCOPE_MESSAGE_VERSION_POSITION: usize = 4;
 pub const NGSCOPE_MESSAGE_CONTENT_POSITION: usize = 5;
 pub const NGSCOPE_STRUCT_SIZE_DCI: usize = 40;
-pub const NGSCOPE_STRUCT_SIZE_CELL_DCI: usize = 448;
+pub const NGSCOPE_STRUCT_SIZE_CELL_DCI: usize = 848;
 pub const NGSCOPE_STRUCT_SIZE_CONFIG: usize = 12; // TODO: Determine this actually
 
 // IMPORTANT:
@@ -144,7 +144,7 @@ pub struct NgScopeRntiDci {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Copy, Clone, Debug)]
 #[allow(non_snake_case)]
 pub struct NgScopeCellDci {
     pub cell_id: u8,
@@ -158,6 +158,24 @@ pub struct NgScopeCellDci {
     pub total_ul_reTx: u8,
     pub nof_rnti: u8,
     pub rnti_list: [NgScopeRntiDci; NGSCOPE_MAX_NOF_RNTI],
+}
+
+impl Default for NgScopeCellDci {
+    fn default() -> Self {
+        NgScopeCellDci {
+            cell_id: 0,
+            time_stamp: 0,
+            tti: 0,
+            total_dl_tbs: 0,
+            total_ul_tbs: 0,
+            total_dl_prb: 0,
+            total_ul_prb: 0,
+            total_dl_reTx: 0,
+            total_ul_reTx: 0,
+            nof_rnti: 0,
+            rnti_list: [NgScopeRntiDci::default(); NGSCOPE_MAX_NOF_RNTI],
+        }
+    }
 }
 
 impl NgScopeCellDci {

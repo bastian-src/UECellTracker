@@ -12,6 +12,7 @@ use bus::{Bus, BusReader};
 use nalgebra::{DMatrix, DVector};
 use serde_derive::{Deserialize, Serialize};
 
+use crate::logger::log_traffic_collection;
 use crate::logic::traffic_patterns::{TrafficPattern, TrafficPatternFeatures};
 use crate::logic::{
     check_not_stopped, wait_until_running, MainState, MessageDci, MessageRnti, RntiMatcherState,
@@ -21,7 +22,7 @@ use crate::ngscope::types::NgScopeCellDci;
 use crate::parse::{Arguments, FlattenedRntiMatchingArgs};
 
 use crate::util::{
-    determine_process_id, log_rnti_matching_traffic, print_debug, print_info, CellRntiRingBuffer,
+    determine_process_id, print_debug, print_info, CellRntiRingBuffer,
 };
 
 use crate::math_util::{
@@ -138,6 +139,8 @@ pub struct TrafficCollection {
     pub start_timestamp_ms: u64,
     pub finish_timestamp_ms: u64,
     pub traffic_pattern_features: TrafficPatternFeatures,
+    pub basic_filter_statistics: Option<BasicFilterStatistics>,
+    pub feature_distance_statistics: Option<FeatureDistanceStatistics>,
 }
 
 #[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
@@ -317,6 +320,8 @@ fn handle_start_matching(
         start_timestamp_ms,
         finish_timestamp_ms,
         traffic_pattern_features,
+        basic_filter_statistics: None,
+        feature_distance_statistics: None,
     };
 
     let _ = tx_gen_thread.send(LocalGeneratorState::SendPattern(Box::new(traffic_pattern)));
@@ -351,13 +356,9 @@ fn handle_process_dci(
     // Check number of packets plausability: expected ms -> expected dcis
     let mut message_rnti: MessageRnti = MessageRnti::default();
 
-    /* log files */
-    if log_traffic {
-        let _ = log_rnti_matching_traffic(&traffic_collection);
-    }
-
+    /* First processing step: Reduce RNTIs */
     traffic_collection.apply_basic_filter();
-
+    /* Second processing step: Determine distances */
     let best_matches = match traffic_collection.find_best_matching_rnti() {
         Ok(matches) => matches,
         Err(e) => {
@@ -370,6 +371,9 @@ fn handle_process_dci(
             );
         }
     };
+    if log_traffic {
+        let _ = log_traffic_collection(traffic_collection.clone());
+    }
     cell_rnti_ring_buffer.update(&best_matches);
     print_debug(&format!(
         "DEBUG [rntimatcher] cell_rnti_ring_buffer: {:#?}",
@@ -622,7 +626,7 @@ fn wait_for_running(
         Ok(_) => Ok(()),
         _ => {
             send_final_state(tx_rntimtacher_state)?;
-            Err(anyhow!("[sink] Main did not send 'Running' message"))
+            Err(anyhow!("[rntimatcher] Main did not send 'Running' message"))
         }
     }
 }
@@ -675,7 +679,7 @@ impl TrafficCollection {
      *   MEDIAN UL
      *
      * */
-    fn apply_basic_filter(&mut self) -> BasicFilterStatistics {
+    fn apply_basic_filter(&mut self) {
         let mut stats: BasicFilterStatistics = Default::default();
         let max_total_ul = (BASIC_FILTER_MAX_TOTAL_UL_FACTOR
             * self.traffic_pattern_features.total_ul_bytes as f64)
@@ -764,19 +768,108 @@ impl TrafficCollection {
                 .retain(|key, _| rntis_to_keep.contains(key));
         }
 
-        stats
+        self.basic_filter_statistics = Some(stats)
     }
 
     /*
      * cell_id -> { (rnti, distance ) }
      *
      * */
-    pub fn find_best_matching_rnti(&self) -> Result<HashMap<u64, u16>> {
-        let pattern_std_vec = &self.traffic_pattern_features.std_vec;
-        let pattern_feature_vec = &self.traffic_pattern_features.std_feature_vec;
+    pub fn find_best_matching_rnti(&mut self) -> Result<HashMap<u64, u16>> {
         /* Change this to use the functional approach */
         // feature_distance_functional(&self.cell_traffic, pattern_std_vec, pattern_feature_vec);
-        feature_distance_matrices(&self.cell_traffic, pattern_std_vec, pattern_feature_vec)
+        self.feature_distance_matrices()
+    }
+
+    fn feature_distance_functional(&self) -> Result<HashMap<u64, u16>> {
+        let pattern_std_vec = &self.traffic_pattern_features.std_vec;
+        let pattern_feature_vec = &self.traffic_pattern_features.std_feature_vec;
+        self.cell_traffic
+            .iter()
+            .map(|(&cell_id, cell_traffic)| {
+                let rnti_and_distance: Result<Vec<(u16, f64)>> = cell_traffic
+                    .traffic
+                    .iter()
+                    .map(|(&rnti, ue_traffic)| {
+                        let std_feature_vec =
+                            ue_traffic.generate_standardized_feature_vec(pattern_std_vec)?;
+                        let distance = calculate_weighted_euclidean_distance(
+                            pattern_feature_vec,
+                            &std_feature_vec,
+                            &MATCHING_WEIGHTINGS,
+                        );
+                        Ok((rnti, distance))
+                    })
+                    .collect::<Result<Vec<(u16, f64)>>>();
+                let mut rnti_and_distance = rnti_and_distance?;
+                rnti_and_distance.sort_by(|a, b| a.1.abs().partial_cmp(&b.1.abs()).unwrap());
+                Ok((cell_id, rnti_and_distance.first().unwrap().0))
+            })
+            .collect::<Result<HashMap<u64, u16>>>()
+    }
+
+    fn feature_distance_matrices(&mut self) -> Result<HashMap<u64, u16>> {
+        let pattern_std_vec = &self.traffic_pattern_features.std_vec;
+        let pattern_feature_vec = &self.traffic_pattern_features.std_feature_vec;
+        let num_features = pattern_std_vec.len();
+        let weightings_vector = DVector::from_row_slice(&MATCHING_WEIGHTINGS);
+    
+        self.cell_traffic
+            .iter()
+            .map(|(&cell_id, cell_traffic)| {
+                let standardized_feature_vecs: Vec<Vec<f64>> = cell_traffic
+                    .traffic
+                    .values()
+                    .map(|ue_traffic| {
+                        ue_traffic
+                            .generate_standardized_feature_vec(pattern_std_vec)
+                            .map_err(|e| anyhow!(e))
+                    })
+                    .collect::<Result<Vec<Vec<f64>>>>()?;
+    
+                let num_vectors = standardized_feature_vecs.len();
+                let data: Vec<f64> = standardized_feature_vecs.clone().into_iter().flatten().collect();
+                let feature_matrix: DMatrix<f64> =
+                    DMatrix::from_row_slice(num_vectors, num_features, &data);
+    
+                // Uncomment and implement debug print if needed
+                // print_debug(&format!("DEBUG [rntimatcher] feature_matrix: {:.2}", feature_matrix));
+    
+                let pattern_feature_matrix =
+                    DMatrix::from_fn(num_vectors, num_features, |_, r| pattern_feature_vec[r]);
+                let euclidean_distances = calculate_weighted_euclidean_distance_matrix(
+                    &pattern_feature_matrix,
+                    &feature_matrix,
+                    &weightings_vector,
+                );
+    
+                // Uncomment and implement debug print if needed
+                print_debug(&format!(
+                    "DEBUG [rntimatcher] distances: {:.2}",
+                    euclidean_distances
+                ));
+    
+                let mut rnti_and_distance: Vec<(u16, f64)> = cell_traffic
+                    .traffic
+                    .keys()
+                    .cloned()
+                    .zip(euclidean_distances.iter().cloned())
+                    .collect();
+    
+                rnti_and_distance.sort_by(|a, b| a.1.abs().partial_cmp(&b.1.abs()).unwrap());
+
+                self.feature_distance_statistics = Some(FeatureDistanceStatistics {
+                    weightings: MATCHING_WEIGHTINGS.to_vec(),
+                    pattern_standardization: pattern_std_vec.clone(),
+                    pattern_features: pattern_feature_vec.clone(),
+                    rntis: cell_traffic.traffic.keys().cloned().collect(),
+                    rnti_features: standardized_feature_vecs.clone(),
+                    rnti_distances: euclidean_distances.column(0).iter().cloned().collect(),
+                });
+    
+                Ok((cell_id, rnti_and_distance.first().unwrap().0))
+            })
+            .collect::<Result<HashMap<u64, u16>>>()
     }
 }
 
@@ -846,99 +939,21 @@ impl UeTraffic {
     }
 }
 
-#[derive(Clone, Debug, Default)]
-struct BasicFilterStatistics {
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct BasicFilterStatistics {
     pub max_total_ul: u64,
     pub min_total_ul: u64,
     pub max_ul_per_dci: u64,
     pub min_occurences: u64,
-    pub zero_ul_median: u64,
 }
 
-fn feature_distance_functional(
-    traffic: &HashMap<u64, CellTrafficCollection>,
-    pattern_std_vec: &[(f64, f64)],
-    pattern_feature_vec: &[f64],
-) -> Result<HashMap<u64, u16>> {
-    traffic
-        .iter()
-        .map(|(&cell_id, cell_traffic)| {
-            let rnti_and_distance: Result<Vec<(u16, f64)>> = cell_traffic
-                .traffic
-                .iter()
-                .map(|(&rnti, ue_traffic)| {
-                    let std_feature_vec =
-                        ue_traffic.generate_standardized_feature_vec(pattern_std_vec)?;
-                    let distance = calculate_weighted_euclidean_distance(
-                        pattern_feature_vec,
-                        &std_feature_vec,
-                        &MATCHING_WEIGHTINGS,
-                    );
-                    Ok((rnti, distance))
-                })
-                .collect::<Result<Vec<(u16, f64)>>>();
-            let mut rnti_and_distance = rnti_and_distance?;
-            rnti_and_distance.sort_by(|a, b| a.1.abs().partial_cmp(&b.1.abs()).unwrap());
-            Ok((cell_id, rnti_and_distance.first().unwrap().0))
-        })
-        .collect::<Result<HashMap<u64, u16>>>()
-}
-
-fn feature_distance_matrices(
-    traffic: &HashMap<u64, CellTrafficCollection>,
-    pattern_std_vec: &[(f64, f64)],
-    pattern_feature_vec: &[f64],
-) -> Result<HashMap<u64, u16>> {
-    let num_features = pattern_std_vec.len();
-    let weightings_vector = DVector::from_row_slice(&MATCHING_WEIGHTINGS);
-
-    traffic
-        .iter()
-        .map(|(&cell_id, cell_traffic)| {
-            let standardized_feature_vecs: Result<Vec<Vec<f64>>> = cell_traffic
-                .traffic
-                .values()
-                .map(|ue_traffic| {
-                    ue_traffic
-                        .generate_standardized_feature_vec(pattern_std_vec)
-                        .map_err(|e| anyhow!(e))
-                })
-                .collect();
-
-            let standardized_feature_vecs = standardized_feature_vecs?;
-            let num_vectors = standardized_feature_vecs.len();
-
-            let data: Vec<f64> = standardized_feature_vecs.into_iter().flatten().collect();
-            let feature_matrix: DMatrix<f64> =
-                DMatrix::from_row_slice(num_vectors, num_features, &data);
-
-            // Uncomment and implement debug print if needed
-            // print_debug(&format!("DEBUG [rntimatcher] feature_matrix: {:.2}", feature_matrix));
-
-            let pattern_feature_matrix =
-                DMatrix::from_fn(num_vectors, num_features, |_, r| pattern_feature_vec[r]);
-            let euclidean_distances = calculate_weighted_euclidean_distance_matrix(
-                &pattern_feature_matrix,
-                &feature_matrix,
-                &weightings_vector,
-            );
-
-            // Uncomment and implement debug print if needed
-            print_debug(&format!(
-                "DEBUG [rntimatcher] distances: {:.2}",
-                euclidean_distances
-            ));
-
-            let mut rnti_and_distance: Vec<(u16, f64)> = cell_traffic
-                .traffic
-                .keys()
-                .cloned()
-                .zip(euclidean_distances.iter().cloned())
-                .collect();
-
-            rnti_and_distance.sort_by(|a, b| a.1.abs().partial_cmp(&b.1.abs()).unwrap());
-
-            Ok((cell_id, rnti_and_distance.first().unwrap().0))
-        })
-        .collect::<Result<HashMap<u64, u16>>>()
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct FeatureDistanceStatistics {
+    /* TODO: Implement fields */
+    pub weightings: Vec<f64>,
+    pub pattern_standardization: Vec<(f64, f64)>,
+    pub pattern_features: Vec<f64>,
+    pub rntis: Vec<u16>,
+    pub rnti_features: Vec<Vec<f64>>,
+    pub rnti_distances: Vec<f64>,
 }
