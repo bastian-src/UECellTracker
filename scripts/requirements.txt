@@ -6,3 +6,5 @@ seaborn
 json
 linecache
 pandas
+pyarrow
+glob
