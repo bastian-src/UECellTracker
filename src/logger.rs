@@ -400,10 +400,12 @@ fn create_rnti_fields() -> Fields {
         Field::new("dl_prb", DataType::UInt8, true),
         Field::new("dl_tbs", DataType::UInt32, true),
         Field::new("dl_retx", DataType::UInt8, true),
+        Field::new("dl_reserved_mcs_prb", DataType::UInt8, true),
 
         Field::new("ul_prb", DataType::UInt8, true),
         Field::new("ul_tbs", DataType::UInt32, true),
         Field::new("ul_retx", DataType::UInt8, true),
+        Field::new("ul_reserved_mcs_prb", DataType::UInt8, true),
     ])
 }
 
@@ -463,10 +465,12 @@ fn append_rnti_list_to_struct(rnti_struct_builder: &mut StructBuilder, rnti_list
         rnti_struct_builder.field_builder::<UInt8Builder>(1).unwrap().append_value(rnti_dci.dl_prb);
         rnti_struct_builder.field_builder::<UInt32Builder>(2).unwrap().append_value(rnti_dci.dl_tbs);
         rnti_struct_builder.field_builder::<UInt8Builder>(3).unwrap().append_value(rnti_dci.dl_reTx);
+        rnti_struct_builder.field_builder::<UInt8Builder>(4).unwrap().append_value(rnti_dci.dl_reserved_mcs_prb);
 
-        rnti_struct_builder.field_builder::<UInt8Builder>(4).unwrap().append_value(rnti_dci.ul_prb);
-        rnti_struct_builder.field_builder::<UInt32Builder>(5).unwrap().append_value(rnti_dci.ul_tbs);
-        rnti_struct_builder.field_builder::<UInt8Builder>(6).unwrap().append_value(rnti_dci.ul_reTx);
+        rnti_struct_builder.field_builder::<UInt8Builder>(5).unwrap().append_value(rnti_dci.ul_prb);
+        rnti_struct_builder.field_builder::<UInt32Builder>(6).unwrap().append_value(rnti_dci.ul_tbs);
+        rnti_struct_builder.field_builder::<UInt8Builder>(7).unwrap().append_value(rnti_dci.ul_reTx);
+        rnti_struct_builder.field_builder::<UInt8Builder>(8).unwrap().append_value(rnti_dci.ul_reserved_mcs_prb);
 
         rnti_struct_builder.append(true);
     }

@@ -137,10 +137,12 @@ pub struct NgScopeRntiDci {
     pub dl_tbs: u32,
     pub dl_prb: u8,
     pub dl_reTx: u8,
+    pub dl_reserved_mcs_prb: u8,
 
     pub ul_tbs: u32,
     pub ul_prb: u8,
     pub ul_reTx: u8,
+    pub ul_reserved_mcs_prb: u8,
 }
 
 #[repr(C)]
@@ -156,6 +158,8 @@ pub struct NgScopeCellDci {
     pub total_ul_prb: u8,
     pub total_dl_reTx: u8,
     pub total_ul_reTx: u8,
+    pub total_dl_reserved_mcs_prb: u8,
+    pub total_ul_reserved_mcs_prb: u8,
     pub nof_rnti: u8,
     pub rnti_list: [NgScopeRntiDci; NGSCOPE_MAX_NOF_RNTI],
 }
@@ -172,6 +176,8 @@ impl Default for NgScopeCellDci {
             total_ul_prb: 0,
             total_dl_reTx: 0,
             total_ul_reTx: 0,
+            total_dl_reserved_mcs_prb: 0,
+            total_ul_reserved_mcs_prb: 0,
             nof_rnti: 0,
             rnti_list: [NgScopeRntiDci::default(); NGSCOPE_MAX_NOF_RNTI],
         }
