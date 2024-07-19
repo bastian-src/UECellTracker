@@ -397,15 +397,13 @@ fn create_rnti_fields() -> Fields {
     Fields::from(vec![
         Field::new("rnti", DataType::UInt16, true),
 
+        Field::new("dl_tbs_bit", DataType::UInt32, true),
         Field::new("dl_prb", DataType::UInt8, true),
-        Field::new("dl_tbs", DataType::UInt32, true),
-        Field::new("dl_retx", DataType::UInt8, true),
-        Field::new("dl_reserved_mcs_prb", DataType::UInt8, true),
+        Field::new("dl_no_tbs_prb", DataType::UInt8, true),
 
+        Field::new("ul_tbs_bit", DataType::UInt32, true),
         Field::new("ul_prb", DataType::UInt8, true),
-        Field::new("ul_tbs", DataType::UInt32, true),
-        Field::new("ul_retx", DataType::UInt8, true),
-        Field::new("ul_reserved_mcs_prb", DataType::UInt8, true),
+        Field::new("ul_no_tbs_prb", DataType::UInt8, true),
     ])
 }
 
@@ -437,8 +435,7 @@ fn write_arrow_ipc(
             rnti_list_builder.append(false); // Append null for an empty list
         } else {
             let rnti_struct_builder = rnti_list_builder.values();
-            append_rnti_list_to_struct(rnti_struct_builder, &cell_dci.rnti_list[0..cell_dci.nof_rnti as usize]);
-            rnti_list_builder.append(true);
+            append_rnti_list_to_struct(rnti_struct_builder, &cell_dci.rnti_list[0..cell_dci.nof_rnti as usize]); rnti_list_builder.append(true);
         }
     }
 
@@ -462,15 +459,13 @@ fn append_rnti_list_to_struct(rnti_struct_builder: &mut StructBuilder, rnti_list
     for rnti_dci in rnti_list.iter() {
         rnti_struct_builder.field_builder::<UInt16Builder>(0).unwrap().append_value(rnti_dci.rnti);
 
-        rnti_struct_builder.field_builder::<UInt8Builder>(1).unwrap().append_value(rnti_dci.dl_prb);
-        rnti_struct_builder.field_builder::<UInt32Builder>(2).unwrap().append_value(rnti_dci.dl_tbs);
-        rnti_struct_builder.field_builder::<UInt8Builder>(3).unwrap().append_value(rnti_dci.dl_reTx);
-        rnti_struct_builder.field_builder::<UInt8Builder>(4).unwrap().append_value(rnti_dci.dl_reserved_mcs_prb);
+        rnti_struct_builder.field_builder::<UInt32Builder>(1).unwrap().append_value(rnti_dci.dl_tbs_bit);
+        rnti_struct_builder.field_builder::<UInt8Builder>(2).unwrap().append_value(rnti_dci.dl_prb);
+        rnti_struct_builder.field_builder::<UInt8Builder>(3).unwrap().append_value(rnti_dci.dl_no_tbs_prb);
 
+        rnti_struct_builder.field_builder::<UInt32Builder>(4).unwrap().append_value(rnti_dci.ul_tbs_bit);
         rnti_struct_builder.field_builder::<UInt8Builder>(5).unwrap().append_value(rnti_dci.ul_prb);
-        rnti_struct_builder.field_builder::<UInt32Builder>(6).unwrap().append_value(rnti_dci.ul_tbs);
-        rnti_struct_builder.field_builder::<UInt8Builder>(7).unwrap().append_value(rnti_dci.ul_reTx);
-        rnti_struct_builder.field_builder::<UInt8Builder>(8).unwrap().append_value(rnti_dci.ul_reserved_mcs_prb);
+        rnti_struct_builder.field_builder::<UInt8Builder>(6).unwrap().append_value(rnti_dci.ul_no_tbs_prb);
 
         rnti_struct_builder.append(true);
     }

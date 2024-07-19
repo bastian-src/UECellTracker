@@ -27,6 +27,11 @@ pub const MAX_DCI_SLICE_INDEX: usize = MAX_DCI_ARRAY_SIZE - MAX_DCI_SLICE_SIZE;
 pub const PHYSICAL_TO_TRANSPORT_OVERHEAD: f64 = 0.068;
 pub const PHYSICAL_TO_TRANSPORT_FACTOR: f64 = 1.0 - PHYSICAL_TO_TRANSPORT_OVERHEAD;
 pub const STANDARD_NOF_PRB_SLOT_TO_SUBFRAME: u64 = 2;
+pub const STANDARD_BIT_PER_PRB: u64 = 500; /* Chosen from historical data */
+
+pub const RNTI_SHARE_TYPE_ALL: u8 = 0;
+// pub const RNTI_SHARE_TYPE_UNFAIR: u8 = 0; // Don't share idle PRBs
+// pub const RNTI_SHARE_TYPE_ACTIVE: u8 = 0; // Share idle PRBs among "active" RNTIs
 
 struct DciRingBuffer {
     dci_array: Box<[NgScopeCellDci]>,
@@ -70,25 +75,28 @@ impl DciRingBuffer {
 
 #[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
 pub struct MetricResult {
-    pub transport_fair_share_capacity: u64,
-    pub physical_fair_share_capacity: u64,
+    pub transport_fair_share_capacity_bit_per_ms: u64,
+    pub physical_fair_share_capacity_bit_per_ms: u64,
     pub physical_rate_bit_per_prb: u64,
     /// If 1, all RNTIs are used to determine the bit/PRB rate (more general)
     /// If 0, only the target-RNTI PRBs are used to determine the bit/PRB rate (more specific)
     pub physical_rate_coarse_flag: u8,
-    pub nof_retransmissions: u64,
+    pub no_tbs_prb_ratio: f64,
 }
 
 #[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
 pub struct MetricBasis {
     pub nof_dci: u64,
     pub p_cell: u64,
-    pub nof_rnti: u64,
+    pub nof_rnti_shared: u64,
+    pub rnti_share_type: u8,
     pub p_alloc: u64,
-    pub tbs_alloc: u64,
+    pub p_alloc_no_tbs: u64,
+    pub tbs_alloc_bit: u64,
     pub target_rnti: u16,
-    pub tbs_alloc_rnti: u64,
+    pub tbs_alloc_rnti_bit: u64,
     pub p_alloc_rnti: u64,
+    pub p_alloc_no_tbs_rnti: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
@@ -213,12 +221,13 @@ fn run(run_args: &mut RunArgs) -> Result<()> {
         };
         match rx_rnti.try_recv() {
             Ok(rnti_msg) => {
-                let rnti: u16 = rnti_msg.cell_rnti.values().copied().next().unwrap();
-                last_rnti = Some(rnti);
-                print_debug(&format!(
-                    "DEBUG [model] new rnti {:#?}",
-                    rnti_msg.cell_rnti.get(&0).unwrap()
-                ));
+                if let Some(rnti) = rnti_msg.cell_rnti.values().copied().next() {
+                    last_rnti = Some(rnti);
+                    print_debug(&format!(
+                        "DEBUG [model] new rnti {:#?}",
+                        rnti_msg.cell_rnti.get(&0).unwrap()
+                    ));
+                }
             }
             Err(TryRecvError::Empty) => {}
             Err(TryRecvError::Disconnected) => break,
@@ -282,10 +291,10 @@ fn handle_calculate_metric(
     if !buffer_slice.is_empty() {
 
         if let Ok(metric_wrapper) = calculate_capacity(*rnti, cell_info, buffer_slice, is_log_metric) {
-            let transport_capacity = metric_wrapper.result.transport_fair_share_capacity;
+            let transport_capacity = metric_wrapper.result.transport_fair_share_capacity_bit_per_ms;
             let physical_rate_flag = metric_wrapper.result.physical_rate_coarse_flag;
             let physical_rate = metric_wrapper.result.physical_rate_bit_per_prb;
-            let re_transmissions = metric_wrapper.result.nof_retransmissions;
+            let no_tbs_prb_ratio = metric_wrapper.result.no_tbs_prb_ratio;
             let now_us = chrono::Utc::now().timestamp_micros() as u64;
 
             tx_metric.broadcast(MessageMetric {
@@ -295,7 +304,7 @@ fn handle_calculate_metric(
                     latest_dci_timestamp_us: buffer_slice.first().unwrap().time_stamp,
                     oldest_dci_timestamp_us: buffer_slice.last().unwrap().time_stamp,
                     nof_dci: buffer_slice.len() as u16,
-                    nof_re_tx: re_transmissions as u16,
+                    no_tbs_prb_ratio,
                     flag_phy_rate_all_rnti: physical_rate_flag,
                     phy_rate: physical_rate,
                 }),
@@ -316,22 +325,24 @@ fn calculate_capacity(
     dci_list: &[NgScopeCellDci],
     is_log_metric: &bool,
 ) -> Result<LogMetric> {
-    let metric_wrapper = calculate_pbe_cc_capacity(target_rnti, cell_info, dci_list)?;
+    let metric_wrapper = calculate_pbe_cc_capacity(target_rnti, cell_info, dci_list, RNTI_SHARE_TYPE_ALL)?;
     if *is_log_metric {
         let _ = log_metric(metric_wrapper.clone());
     }
     print_debug(&format!(
                 "DEBUG [model] model:
-                                 c_t:      \t{:?}
-                                 c_p:      \t{:?}
-                                 phy rate: \t{:?}
+                                 c_t:      \t{:6?} bit/ms | {:3.3?} Mbit/s
+                                 c_p:      \t{:6?} bit/ms | {:3.3?} Mbit/s
+                                 phy rate: \t{:6?} bit/PRB
                                  phy flag: \t{:?}
-                                 re-tx:    \t{:?}",
-                metric_wrapper.result.transport_fair_share_capacity,
-                metric_wrapper.result.physical_fair_share_capacity,
+                                 no_tbs %:  \t{:?}",
+                metric_wrapper.result.transport_fair_share_capacity_bit_per_ms,
+                metric_wrapper.result.transport_fair_share_capacity_bit_per_ms as f64 * 1000.0 / (1024.0 * 1024.0),
+                metric_wrapper.result.physical_fair_share_capacity_bit_per_ms,
+                metric_wrapper.result.physical_fair_share_capacity_bit_per_ms as f64 * 1000.0 / (1024.0 * 1024.0),
                 metric_wrapper.result.physical_rate_bit_per_prb,
                 metric_wrapper.result.physical_rate_coarse_flag,
-                metric_wrapper.result.nof_retransmissions,
+                metric_wrapper.result.no_tbs_prb_ratio,
             ));
     Ok(metric_wrapper)
 }
@@ -346,6 +357,7 @@ fn calculate_pbe_cc_capacity(
     target_rnti: u16,
     cell_info: &CellInfo,
     dci_list: &[NgScopeCellDci],
+    rnti_share_type: u8,
 ) -> Result<LogMetric> {
     let nof_dci: u64 = dci_list.len() as u64;
     if nof_dci == 0 {
@@ -366,9 +378,17 @@ fn calculate_pbe_cc_capacity(
         .collect::<HashSet<u16>>()
         .len() as u64;
 
-    let p_alloc: u64 = dci_list.iter().map(|dci| dci.total_dl_prb as u64).sum();
+    /* TOOD: Evaluate rnti_share_type */
+    let nof_rnti_shared = if nof_rnti == 0 {
+        1
+    } else {
+        nof_rnti
+    };
 
-    let tbs_alloc: u64 = dci_list.iter().map(|dci| dci.total_dl_tbs).sum();
+    let p_alloc: u64 = dci_list.iter().map(|dci| dci.total_dl_prb as u64).sum();
+    let p_alloc_no_tbs: u64 = dci_list.iter().map(|dci| dci.total_dl_no_tbs_prb as u64).sum();
+
+    let tbs_alloc_bit: u64 = dci_list.iter().map(|dci| dci.total_dl_tbs_bit).sum();
 
     let target_rnti_dci_list: Vec<&NgScopeRntiDci> = dci_list
         .iter()
@@ -381,14 +401,10 @@ fn calculate_pbe_cc_capacity(
         })
         .collect::<Vec<&NgScopeRntiDci>>();
 
-    let re_tx: u64 = target_rnti_dci_list
-        .iter()
-        .map(|target_rnti_dci| target_rnti_dci.dl_reTx as u64)
-        .sum::<u64>();
 
-    let tbs_alloc_rnti: u64 = target_rnti_dci_list
+    let tbs_alloc_rnti_bit: u64 = target_rnti_dci_list
         .iter()
-        .map(|target_rnti_dci| target_rnti_dci.dl_tbs as u64)
+        .map(|target_rnti_dci| target_rnti_dci.dl_tbs_bit as u64)
         .sum::<u64>();
 
     let p_alloc_rnti: u64 = target_rnti_dci_list
@@ -396,47 +412,75 @@ fn calculate_pbe_cc_capacity(
         .map(|target_rnti_dci| target_rnti_dci.dl_prb as u64)
         .sum::<u64>();
 
+    let p_alloc_no_tbs_rnti: u64 = target_rnti_dci_list
+        .iter()
+        .map(|target_rnti_dci| target_rnti_dci.dl_no_tbs_prb as u64)
+        .sum::<u64>();
+
     print_debug(&format!(
         "DEBUG [model] parameters:
-                         nof_dci: \t\t{:?}
-                         p_cell: \t\t{:?}
-                         nof_rnti: \t\t{:?}
-                         p_alloc: \t\t{:?}
-                         p_alloc_rnti: \t\t{:?}
-                         tbs_alloc_rnti: \t{:?}
-                         re_tx: \t\t{:?}",
-        nof_dci, p_cell, nof_rnti, p_alloc, p_alloc_rnti, tbs_alloc_rnti, re_tx
+                         nof_dci:              {:?}
+                         p_cell:               {:?}
+                         nof_rnti:             {:?}
+                         p_alloc:              {:?}
+                         p_alloc_no_tbs:       {:?}
+                         p_alloc_rnti:         {:?}
+                         p_alloc_rnti_no_tbs:  {:?}
+                         tbs_alloc_rnti:       {:?}
+                         RNTI MB/s:            {:3.3?},
+                         RNTI Mb/s:            {:3.3?}",
+        nof_dci, p_cell, nof_rnti, p_alloc, p_alloc_no_tbs, p_alloc_rnti, p_alloc_no_tbs_rnti, tbs_alloc_rnti_bit,
+        (tbs_alloc_rnti_bit as f64 / (8.0 * nof_dci as f64)) * 1000.0 / (1024.0 * 1024.0),
+        (tbs_alloc_rnti_bit as f64 / (nof_dci as f64)) * 1000.0 / (1024.0 * 1024.0),
     ));
     let mut r_w_coarse_flag: u8 = 0;
+    let p_alloc_total = p_alloc + p_alloc_no_tbs;
     // [bit/PRB]
     let r_w: u64 = if p_alloc_rnti == 0 {
         r_w_coarse_flag = 1;
-        8 * tbs_alloc / p_alloc
+        if p_alloc > 0 {
+            /* Use mean ratio of other RNTIs */
+            tbs_alloc_bit / p_alloc
+        } else {
+            /* Use bit per PRB rate from experience */
+            STANDARD_BIT_PER_PRB
+        }
     } else {
-        8 * tbs_alloc_rnti / p_alloc_rnti
+        tbs_alloc_rnti_bit / p_alloc_rnti
     };
-    let p_idle: f64 = p_cell as f64 - p_alloc as f64;
+    let p_idle: f64 = p_cell as f64 - p_alloc_total as f64;
+    if p_idle < 0.0 {
+        return Err(anyhow!("error in calculate PBE capacity: p_idle < 0! (probably more p_alloc_no_tbs than p_cell)"));
+    }
     let c_p: u64 =
-        ((r_w as f64 * (p_alloc_rnti as f64 + (p_idle / nof_rnti as f64))) / nof_dci as f64) as u64;
+        ((r_w as f64 * (p_alloc_rnti as f64 + (p_idle / nof_rnti_shared as f64))) / nof_dci as f64) as u64;
     let c_t = translate_physcial_to_transport_simple(c_p);
+
+    let mut no_tbs_prb_ratio = 0.0;
+    if p_alloc_no_tbs > 0 {
+        no_tbs_prb_ratio = p_alloc_total as f64 / p_alloc_no_tbs as f64;
+    }
 
     Ok(LogMetric {
         result: MetricResult {
-            physical_fair_share_capacity: c_p,
-            transport_fair_share_capacity: c_t,
+            physical_fair_share_capacity_bit_per_ms: c_p,
+            transport_fair_share_capacity_bit_per_ms: c_t,
             physical_rate_bit_per_prb: r_w,
             physical_rate_coarse_flag: r_w_coarse_flag,
-            nof_retransmissions: re_tx,
+            no_tbs_prb_ratio,
         },
         basis: MetricBasis {
             nof_dci,
             p_cell,
-            nof_rnti,
+            nof_rnti_shared,
+            rnti_share_type,
             p_alloc,
-            tbs_alloc,
+            p_alloc_no_tbs,
+            tbs_alloc_bit,
             target_rnti,
-            tbs_alloc_rnti,
+            tbs_alloc_rnti_bit,
             p_alloc_rnti,
+            p_alloc_no_tbs_rnti,
         }
     })
 }
@@ -479,7 +523,7 @@ mod tests {
     fn dummy_rnti_dci(nof_rnti: u8) -> [NgScopeRntiDci; NGSCOPE_MAX_NOF_RNTI] {
         let mut rnti_list = [NgScopeRntiDci::default(); NGSCOPE_MAX_NOF_RNTI];
         for i in 0..nof_rnti {
-            rnti_list[0].dl_tbs = 1024;
+            rnti_list[0].dl_tbs_bit = 1024;
             rnti_list[0].dl_prb = 2 + i;
             rnti_list[0].rnti = 123 + i as u16;
         }
@@ -520,10 +564,10 @@ mod tests {
             }],
         };
         let metric_params = calculate_capacity(dummy_rnti, &dummy_cell_info, &dummy_dci_slice(), &false)?;
-        assert_eq!(metric_params.result.physical_fair_share_capacity, 266240);
-        assert_eq!(metric_params.result.physical_rate_bit_per_prb, 512 * 8);
+        assert_eq!(metric_params.result.physical_fair_share_capacity_bit_per_ms, 33280);
+        assert_eq!(metric_params.result.physical_rate_bit_per_prb, 512);
         assert_eq!(metric_params.result.physical_rate_coarse_flag, 0);
-        assert_eq!(metric_params.result.nof_retransmissions, 0);
+        assert_eq!(metric_params.result.no_tbs_prb_ratio, 0.0);
         Ok(())
     }
 }

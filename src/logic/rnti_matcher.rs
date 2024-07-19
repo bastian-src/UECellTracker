@@ -648,10 +648,10 @@ impl TrafficCollection {
 
             // Update the traffic for the specific TTI
             let traffic = ue_traffic.traffic.entry(cell_dci.time_stamp).or_default();
-            traffic.dl_bytes += rnti_dci.dl_tbs as u64;
-            traffic.ul_bytes += rnti_dci.ul_tbs as u64;
-            ue_traffic.total_dl_bytes += rnti_dci.dl_tbs as u64;
-            ue_traffic.total_ul_bytes += rnti_dci.ul_tbs as u64;
+            traffic.dl_bytes += (rnti_dci.dl_tbs_bit / 8) as u64;
+            traffic.ul_bytes += (rnti_dci.ul_tbs_bit / 8) as u64;
+            ue_traffic.total_dl_bytes += (rnti_dci.dl_tbs_bit / 8) as u64;
+            ue_traffic.total_ul_bytes += (rnti_dci.ul_tbs_bit / 8) as u64;
         }
 
         // Increment the nof_dci
