@@ -290,7 +290,8 @@ fn run_dci_fetcher(
         determine_process_id()
     ));
 
-    let mut log_dci_buffer: Vec<NgScopeCellDci> = Vec::with_capacity(2 * log_dci_batch_size as usize);
+    let mut log_dci_buffer: Vec<NgScopeCellDci> =
+        Vec::with_capacity(2 * log_dci_batch_size as usize);
     let sleep_duration = Duration::from_micros(DEFAULT_WORKER_SLEEP_US);
     let mut last_dci_timestamp_us: u64 = 0;
 
@@ -327,7 +328,13 @@ fn run_dci_fetcher(
                 };
             }
             LocalDciState::ListenForDci => {
-                check_ngscope_message(&socket, &mut tx_dci, &mut last_dci_timestamp_us, &is_log_dci, &mut log_dci_buffer);
+                check_ngscope_message(
+                    &socket,
+                    &mut tx_dci,
+                    &mut last_dci_timestamp_us,
+                    &is_log_dci,
+                    &mut log_dci_buffer,
+                );
                 check_log_dci(&is_log_dci, &mut log_dci_buffer, &log_dci_batch_size);
             }
         }
@@ -402,14 +409,13 @@ fn check_ngscope_message(
 fn check_log_dci(
     is_log_dci: &bool,
     log_dci_buffer: &mut Vec<NgScopeCellDci>,
-    log_dci_batch_size: &u64
+    log_dci_batch_size: &u64,
 ) {
     if *is_log_dci && log_dci_buffer.len() >= *log_dci_batch_size as usize {
         let _ = log_dci(log_dci_buffer.clone());
         log_dci_buffer.clear()
     }
 }
-
 
 /*  --------------  */
 /*      Helpers     */

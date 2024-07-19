@@ -2,13 +2,15 @@ use std::fs::{create_dir_all, File, OpenOptions};
 use std::io::Write;
 use std::path::Path;
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TryRecvError};
-use std::sync::{Mutex, Arc};
+use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use anyhow::{anyhow, Result};
-use arrow::array::{UInt64Builder, StructBuilder, UInt8Builder, ListBuilder, ArrayRef, UInt16Builder, UInt32Builder};
-use arrow::datatypes::{Schema, Field, DataType, Fields};
+use arrow::array::{
+    ArrayRef, ListBuilder, StructBuilder, UInt16Builder, UInt32Builder, UInt64Builder, UInt8Builder,
+};
+use arrow::datatypes::{DataType, Field, Fields, Schema};
 use arrow::ipc::writer::FileWriter;
 use arrow::record_batch::RecordBatch;
 
@@ -192,7 +194,10 @@ fn handle_log_message(msg: LogMessage) -> Result<()> {
     }
     let msg_type_name = msg.type_name();
     if Logger::write_log_message(msg).is_err() {
-        print_info(&format!("[logger] error: could not log message ({})", msg_type_name))
+        print_info(&format!(
+            "[logger] error: could not log message ({})",
+            msg_type_name
+        ))
     }
     Ok(())
 }
@@ -223,7 +228,9 @@ pub fn log_info(info: &str) -> Result<()> {
 }
 
 pub fn log_traffic_collection(traffic_collection: TrafficCollection) -> Result<()> {
-    Logger::queue_log_message(LogMessage::RntiMatchingTrafficCollection(Box::new(traffic_collection)))
+    Logger::queue_log_message(LogMessage::RntiMatchingTrafficCollection(Box::new(
+        traffic_collection,
+    )))
 }
 
 pub fn log_metric(metric: LogMetric) -> Result<()> {
@@ -251,7 +258,9 @@ pub fn get_logger() -> &'static mut Lazy<Logger> {
         }
     });
     #[allow(static_mut_refs)]
-    unsafe { &mut GLOBAL_LOGGER }
+    unsafe {
+        &mut GLOBAL_LOGGER
+    }
 }
 
 impl Logger {
@@ -330,7 +339,8 @@ impl LogMessage {
             LogMessage::NgScopeDci(_) => "ngscope dci",
             LogMessage::RntiMatchingTrafficCollection(_) => "rnti traffic collection",
             LogMessage::Metric(_) => "metric",
-        }.to_string()
+        }
+        .to_string()
     }
 
     pub fn file_path(&self, base_dir: &str, run_timestamp: &DateTime<Utc>) -> String {
@@ -388,7 +398,6 @@ impl LogMessage {
     }
 }
 
-
 /*
  * Helpers for writing Vec<NgScopeCellDci> as Apache Arrow to disk
  * */
@@ -396,11 +405,9 @@ impl LogMessage {
 fn create_rnti_fields() -> Fields {
     Fields::from(vec![
         Field::new("rnti", DataType::UInt16, true),
-
         Field::new("dl_tbs_bit", DataType::UInt32, true),
         Field::new("dl_prb", DataType::UInt8, true),
         Field::new("dl_no_tbs_prb", DataType::UInt8, true),
-
         Field::new("ul_tbs_bit", DataType::UInt32, true),
         Field::new("ul_prb", DataType::UInt8, true),
         Field::new("ul_no_tbs_prb", DataType::UInt8, true),
@@ -408,24 +415,24 @@ fn create_rnti_fields() -> Fields {
 }
 
 fn create_schema() -> Arc<Schema> {
-
     let rnti_struct = DataType::Struct(create_rnti_fields());
 
     Arc::new(Schema::new(vec![
         Field::new("timestamp", DataType::UInt64, false),
         Field::new("nof_rnti", DataType::UInt8, false),
-        Field::new("rnti_list", DataType::List(Arc::new(Field::new("item", rnti_struct, true))), true),
+        Field::new(
+            "rnti_list",
+            DataType::List(Arc::new(Field::new("item", rnti_struct, true))),
+            true,
+        ),
     ]))
 }
 
-fn write_arrow_ipc(
-    schema: Arc<Schema>,
-    data: Vec<NgScopeCellDci>,
-    file: &File
-) -> Result<()> {
+fn write_arrow_ipc(schema: Arc<Schema>, data: Vec<NgScopeCellDci>, file: &File) -> Result<()> {
     let mut timestamp_builder = UInt64Builder::with_capacity(data.len());
     let mut nof_rntis_builder = UInt8Builder::with_capacity(data.len());
-    let mut rnti_list_builder = ListBuilder::new(StructBuilder::from_fields(create_rnti_fields(), data.len()));
+    let mut rnti_list_builder =
+        ListBuilder::new(StructBuilder::from_fields(create_rnti_fields(), data.len()));
 
     for cell_dci in &data {
         timestamp_builder.append_value(cell_dci.time_stamp);
@@ -435,7 +442,11 @@ fn write_arrow_ipc(
             rnti_list_builder.append(false); // Append null for an empty list
         } else {
             let rnti_struct_builder = rnti_list_builder.values();
-            append_rnti_list_to_struct(rnti_struct_builder, &cell_dci.rnti_list[0..cell_dci.nof_rnti as usize]); rnti_list_builder.append(true);
+            append_rnti_list_to_struct(
+                rnti_struct_builder,
+                &cell_dci.rnti_list[0..cell_dci.nof_rnti as usize],
+            );
+            rnti_list_builder.append(true);
         }
     }
 
@@ -455,19 +466,42 @@ fn write_arrow_ipc(
     Ok(())
 }
 
-fn append_rnti_list_to_struct(rnti_struct_builder: &mut StructBuilder, rnti_list: &[NgScopeRntiDci]) {
+fn append_rnti_list_to_struct(
+    rnti_struct_builder: &mut StructBuilder,
+    rnti_list: &[NgScopeRntiDci],
+) {
     for rnti_dci in rnti_list.iter() {
-        rnti_struct_builder.field_builder::<UInt16Builder>(0).unwrap().append_value(rnti_dci.rnti);
+        rnti_struct_builder
+            .field_builder::<UInt16Builder>(0)
+            .unwrap()
+            .append_value(rnti_dci.rnti);
 
-        rnti_struct_builder.field_builder::<UInt32Builder>(1).unwrap().append_value(rnti_dci.dl_tbs_bit);
-        rnti_struct_builder.field_builder::<UInt8Builder>(2).unwrap().append_value(rnti_dci.dl_prb);
-        rnti_struct_builder.field_builder::<UInt8Builder>(3).unwrap().append_value(rnti_dci.dl_no_tbs_prb);
+        rnti_struct_builder
+            .field_builder::<UInt32Builder>(1)
+            .unwrap()
+            .append_value(rnti_dci.dl_tbs_bit);
+        rnti_struct_builder
+            .field_builder::<UInt8Builder>(2)
+            .unwrap()
+            .append_value(rnti_dci.dl_prb);
+        rnti_struct_builder
+            .field_builder::<UInt8Builder>(3)
+            .unwrap()
+            .append_value(rnti_dci.dl_no_tbs_prb);
 
-        rnti_struct_builder.field_builder::<UInt32Builder>(4).unwrap().append_value(rnti_dci.ul_tbs_bit);
-        rnti_struct_builder.field_builder::<UInt8Builder>(5).unwrap().append_value(rnti_dci.ul_prb);
-        rnti_struct_builder.field_builder::<UInt8Builder>(6).unwrap().append_value(rnti_dci.ul_no_tbs_prb);
+        rnti_struct_builder
+            .field_builder::<UInt32Builder>(4)
+            .unwrap()
+            .append_value(rnti_dci.ul_tbs_bit);
+        rnti_struct_builder
+            .field_builder::<UInt8Builder>(5)
+            .unwrap()
+            .append_value(rnti_dci.ul_prb);
+        rnti_struct_builder
+            .field_builder::<UInt8Builder>(6)
+            .unwrap()
+            .append_value(rnti_dci.ul_no_tbs_prb);
 
         rnti_struct_builder.append(true);
     }
 }
-

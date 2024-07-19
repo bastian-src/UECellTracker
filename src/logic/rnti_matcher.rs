@@ -21,9 +21,7 @@ use crate::logic::{
 use crate::ngscope::types::NgScopeCellDci;
 use crate::parse::{Arguments, FlattenedRntiMatchingArgs};
 
-use crate::util::{
-    determine_process_id, print_debug, print_info, CellRntiRingBuffer,
-};
+use crate::util::{determine_process_id, print_debug, print_info, CellRntiRingBuffer};
 
 use crate::math_util::{
     calculate_mean_variance, calculate_median, calculate_weighted_euclidean_distance,
@@ -813,7 +811,7 @@ impl TrafficCollection {
         let pattern_feature_vec = &self.traffic_pattern_features.std_feature_vec;
         let num_features = pattern_std_vec.len();
         let weightings_vector = DVector::from_row_slice(&MATCHING_WEIGHTINGS);
-    
+
         self.cell_traffic
             .iter()
             .map(|(&cell_id, cell_traffic)| {
@@ -826,15 +824,19 @@ impl TrafficCollection {
                             .map_err(|e| anyhow!(e))
                     })
                     .collect::<Result<Vec<Vec<f64>>>>()?;
-    
+
                 let num_vectors = standardized_feature_vecs.len();
-                let data: Vec<f64> = standardized_feature_vecs.clone().into_iter().flatten().collect();
+                let data: Vec<f64> = standardized_feature_vecs
+                    .clone()
+                    .into_iter()
+                    .flatten()
+                    .collect();
                 let feature_matrix: DMatrix<f64> =
                     DMatrix::from_row_slice(num_vectors, num_features, &data);
-    
+
                 // Uncomment and implement debug print if needed
                 // print_debug(&format!("DEBUG [rntimatcher] feature_matrix: {:.2}", feature_matrix));
-    
+
                 let pattern_feature_matrix =
                     DMatrix::from_fn(num_vectors, num_features, |_, r| pattern_feature_vec[r]);
                 let euclidean_distances = calculate_weighted_euclidean_distance_matrix(
@@ -842,20 +844,20 @@ impl TrafficCollection {
                     &feature_matrix,
                     &weightings_vector,
                 );
-    
+
                 // Uncomment and implement debug print if needed
                 print_debug(&format!(
                     "DEBUG [rntimatcher] distances: {:.2}",
                     euclidean_distances
                 ));
-    
+
                 let mut rnti_and_distance: Vec<(u16, f64)> = cell_traffic
                     .traffic
                     .keys()
                     .cloned()
                     .zip(euclidean_distances.iter().cloned())
                     .collect();
-    
+
                 rnti_and_distance.sort_by(|a, b| a.1.abs().partial_cmp(&b.1.abs()).unwrap());
 
                 self.feature_distance_statistics = Some(FeatureDistanceStatistics {
@@ -866,7 +868,7 @@ impl TrafficCollection {
                     rnti_features: standardized_feature_vecs.clone(),
                     rnti_distances: euclidean_distances.column(0).iter().cloned().collect(),
                 });
-    
+
                 Ok((cell_id, rnti_and_distance.first().unwrap().0))
             })
             .collect::<Result<HashMap<u64, u16>>>()
