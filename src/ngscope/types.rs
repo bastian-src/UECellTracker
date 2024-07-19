@@ -13,7 +13,7 @@ pub const NGSCOPE_MESSAGE_TYPE_SIZE: usize = 4;
 pub const NGSCOPE_MESSAGE_VERSION_POSITION: usize = 4;
 pub const NGSCOPE_MESSAGE_CONTENT_POSITION: usize = 5;
 pub const NGSCOPE_STRUCT_SIZE_DCI: usize = 40;
-pub const NGSCOPE_STRUCT_SIZE_CELL_DCI: usize = 848;
+pub const NGSCOPE_STRUCT_SIZE_CELL_DCI: usize = 856;
 pub const NGSCOPE_STRUCT_SIZE_CONFIG: usize = 12; // TODO: Determine this actually
 
 // IMPORTANT:
@@ -134,15 +134,13 @@ impl NgScopeUeDci {
 #[allow(non_snake_case)]
 pub struct NgScopeRntiDci {
     pub rnti: u16,
-    pub dl_tbs: u32,
+    pub dl_tbs_bit: u32,
     pub dl_prb: u8,
-    pub dl_reTx: u8,
-    pub dl_reserved_mcs_prb: u8,
+    pub dl_no_tbs_prb: u8,
 
-    pub ul_tbs: u32,
+    pub ul_tbs_bit: u32,
     pub ul_prb: u8,
-    pub ul_reTx: u8,
-    pub ul_reserved_mcs_prb: u8,
+    pub ul_no_tbs_prb: u8,
 }
 
 #[repr(C)]
@@ -152,14 +150,12 @@ pub struct NgScopeCellDci {
     pub cell_id: u8,
     pub time_stamp: u64,
     pub tti: u16,
-    pub total_dl_tbs: u64,
-    pub total_ul_tbs: u64,
-    pub total_dl_prb: u8,
-    pub total_ul_prb: u8,
-    pub total_dl_reTx: u8,
-    pub total_ul_reTx: u8,
-    pub total_dl_reserved_mcs_prb: u8,
-    pub total_ul_reserved_mcs_prb: u8,
+    pub total_dl_tbs_bit: u64,
+    pub total_dl_prb: u16,
+    pub total_dl_no_tbs_prb: u16,
+    pub total_ul_tbs_bit: u64,
+    pub total_ul_prb: u16,
+    pub total_ul_no_tbs_prb: u16,
     pub nof_rnti: u8,
     pub rnti_list: [NgScopeRntiDci; NGSCOPE_MAX_NOF_RNTI],
 }
@@ -170,14 +166,12 @@ impl Default for NgScopeCellDci {
             cell_id: 0,
             time_stamp: 0,
             tti: 0,
-            total_dl_tbs: 0,
-            total_ul_tbs: 0,
+            total_dl_tbs_bit: 0,
+            total_ul_tbs_bit: 0,
             total_dl_prb: 0,
             total_ul_prb: 0,
-            total_dl_reTx: 0,
-            total_ul_reTx: 0,
-            total_dl_reserved_mcs_prb: 0,
-            total_ul_reserved_mcs_prb: 0,
+            total_dl_no_tbs_prb: 0,
+            total_ul_no_tbs_prb: 0,
             nof_rnti: 0,
             rnti_list: [NgScopeRntiDci::default(); NGSCOPE_MAX_NOF_RNTI],
         }

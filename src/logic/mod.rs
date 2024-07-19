@@ -281,8 +281,8 @@ pub struct MetricA {
     oldest_dci_timestamp_us: u64,
     /// Number of DCIs used to calculate the metric
     nof_dci: u16,
-    /// Number of phy-layer re-transmissions
-    nof_re_tx: u16,
+    /// Ratio of no TBS PRBs to PRBs with TBS (~reTx ratio)
+    no_tbs_prb_ratio: f64,
     /// Flag, signalling whether phy_rate was averagerd over all RNTIs or just our UE RNTI
     flag_phy_rate_all_rnti: u8,
     /// Average bit per PRB (either over all RNTIs or just the UE RNTI)

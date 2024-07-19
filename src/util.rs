@@ -125,14 +125,14 @@ pub fn determine_process_id() -> u64 {
 
 pub fn print_dci(dci: crate::ngscope::types::NgScopeCellDci) {
     print_info(&format!(
-        "DEBUG: {:?} | {:03?} | {:03?} | {:08?} | {:08?} | {:03?} | {:03?}",
+        "DEBUG: {:?} | {:08?} | {:08?} | {:03?} | {:03?} | {:03?} | {:03?}",
         dci.nof_rnti,
+        dci.total_dl_tbs_bit,
+        dci.total_ul_tbs_bit,
         dci.total_dl_prb,
         dci.total_ul_prb,
-        dci.total_dl_tbs,
-        dci.total_ul_tbs,
-        dci.total_dl_reTx,
-        dci.total_ul_reTx
+        dci.total_dl_no_tbs_prb,
+        dci.total_ul_no_tbs_prb,
     ));
 }
 
