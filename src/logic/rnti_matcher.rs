@@ -19,7 +19,7 @@ use crate::logic::{
     RntiMatchingErrorType, CHANNEL_SYNC_SIZE, DEFAULT_WORKER_SLEEP_MS,
 };
 use crate::ngscope::types::NgScopeCellDci;
-use crate::parse::{Arguments, FlattenedRntiMatchingArgs};
+use crate::parse::{Arguments, FlattenedRntiMatchingArgs, Scenario};
 
 use crate::util::{determine_process_id, print_debug, print_info, CellRntiRingBuffer};
 
@@ -204,6 +204,8 @@ fn run(run_args: &mut RunArgs, run_args_mov: RunArgsMovables) -> Result<()> {
 
     let matching_args =
         FlattenedRntiMatchingArgs::from_unflattened(app_args.clone().rntimatching.unwrap())?;
+    let scenario = app_args.scenario.unwrap();
+
     let mut cell_rnti_ring_buffer: CellRntiRingBuffer =
         CellRntiRingBuffer::new(RNTI_RING_BUFFER_SIZE);
     let traffic_destination = matching_args.matching_traffic_destination;
@@ -237,6 +239,9 @@ fn run(run_args: &mut RunArgs, run_args_mov: RunArgsMovables) -> Result<()> {
         }
         /* unpack dci at every iteration to keep the queue "empty"! */
         let latest_dcis = collect_dcis(rx_dci);
+        if is_idle_scenario(scenario) {
+            continue;
+        }
         /* </precheck> */
 
         matcher_state = match matcher_state {
@@ -250,7 +255,6 @@ fn run(run_args: &mut RunArgs, run_args_mov: RunArgsMovables) -> Result<()> {
                 &mut traffic_pattern_index,
             ),
             RntiMatcherState::MatchingCollectDci(traffic_collection) => {
-                // TODO: Use all dcis here and let this thread sleep again!
                 handle_collect_dci(latest_dcis, *traffic_collection)
             }
             RntiMatcherState::MatchingProcessDci(traffic_collection) => handle_process_dci(
@@ -401,6 +405,14 @@ fn handle_matching_error(
         MATCHING_INTERVAL_MS,
         Box::new(RntiMatcherState::StartMatching),
     )
+}
+
+fn is_idle_scenario(scenario: Scenario) -> bool {
+    match scenario {
+        Scenario::TrackCellDciOnly => true,
+        Scenario::TrackUeAndEstimateTransportCapacity => false,
+        Scenario::PerformMeasurement => false,
+    }
 }
 
 fn finish(run_args: RunArgs) {

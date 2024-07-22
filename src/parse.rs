@@ -6,12 +6,26 @@ use std::{default, error::Error, path::PathBuf};
 
 use crate::{logic::traffic_patterns::RntiMatchingTrafficPatternType, util::print_debug};
 
+pub const DEFAULT_SCENARIO: Scenario = Scenario::TrackUeAndEstimateTransportCapacity;
 pub const DEFAULT_LOG_BASE_DIR: &str = "./.logs/";
+pub const DEFAULT_DOWNLOAD_BASE_ADDR: &str = "http://some.addr";
+pub const DEFAULT_DOWNLOAD_PATHS: &[&str] = &[
+    ":9393/cubic",
+    ":9393/bbr",
+    ":9393/pbe/init",
+    ":9393/pbe/init_and_upper",
+    ":9393/pbe/direct",
+];
+pub const DEFAULT_DOWNLOAD_RNTI_SHARE_TYPES: &[u8] = &[0, 1];
 
 #[derive(Debug, Clone, PartialEq, Parser, Serialize, Deserialize)]
 #[command(author, version, about, long_about = None, next_line_help = true)]
 #[command(propagate_version = true)]
 pub struct Arguments {
+    /// The scenario to run
+    #[arg(long, value_enum, required = false)]
+    pub scenario: Option<Scenario>,
+
     /// Define which API to use to fetch cell data
     #[arg(short('a'), value_enum, required = false)]
     pub cellapi: Option<CellApiConfig>,
@@ -36,9 +50,22 @@ pub struct Arguments {
     #[command(flatten)]
     pub log: Option<LogArgs>,
 
+    #[command(flatten)]
+    pub download: Option<DownloadArgs>,
+
     /// Print additional information in the terminal
     #[arg(short('v'), long, required = false)]
     pub verbose: Option<bool>,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug, Serialize, Deserialize)]
+pub enum Scenario {
+    /// Track UE and send estimated capacity
+    TrackUeAndEstimateTransportCapacity,
+    /// Do not send anything or try to identify the UE's traffic - just collect the cell's DCI data
+    TrackCellDciOnly,
+    /// Perform a measurement by downloading data and collecting connection information
+    PerformMeasurement,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug, Serialize, Deserialize)]
@@ -211,9 +238,27 @@ pub struct FlattenedLogArgs {
     pub log_base_dir: String,
 }
 
+#[derive(Args, Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DownloadArgs {
+    /// Base target address inluding host and port
+    pub download_base_addr: Option<String>,
+    /// List of paths to call on the base address
+    pub download_paths: Option<Vec<String>>,
+    /// List of RNTI Share Type configurations to run
+    pub download_rnti_share_types: Option<Vec<u8>>,
+}
+
+#[derive(Clone, Debug)]
+pub struct FlattenedDownloadArgs {
+    pub download_base_addr: String,
+    pub download_paths: Vec<String>,
+    pub download_rnti_share_types: Vec<u8>,
+}
+
 impl default::Default for Arguments {
     fn default() -> Self {
         Arguments {
+            scenario: Some(DEFAULT_SCENARIO),
             verbose: Some(true),
             cellapi: Some(CellApiConfig::Milesight),
             milesight: Some(MilesightArgs {
@@ -249,6 +294,16 @@ impl default::Default for Arguments {
             }),
             log: Some(LogArgs {
                 log_base_dir: Some(DEFAULT_LOG_BASE_DIR.to_string()),
+            }),
+            download: Some(DownloadArgs {
+                download_base_addr: Some(DEFAULT_DOWNLOAD_BASE_ADDR.to_string()),
+                download_paths: Some(
+                    DEFAULT_DOWNLOAD_PATHS
+                        .iter()
+                        .map(|path| path.to_string())
+                        .collect(),
+                ),
+                download_rnti_share_types: Some(DEFAULT_DOWNLOAD_RNTI_SHARE_TYPES.to_vec()),
             }),
         }
     }
@@ -287,7 +342,9 @@ impl Arguments {
         self.rntimatching = self.rntimatching.or(config_file.rntimatching);
         self.model = self.model.or(config_file.model);
         self.log = self.log.or(config_file.log);
+        self.download = self.download.or(config_file.download);
         self.verbose = self.verbose.or(config_file.verbose);
+        self.scenario = self.scenario.or(config_file.scenario);
 
         Ok(self)
     }
@@ -383,6 +440,16 @@ impl FlattenedLogArgs {
     pub fn from_unflattened(log_args: LogArgs) -> Result<FlattenedLogArgs> {
         Ok(FlattenedLogArgs {
             log_base_dir: log_args.log_base_dir.unwrap(),
+        })
+    }
+}
+
+impl FlattenedDownloadArgs {
+    pub fn from_unflattened(download_args: DownloadArgs) -> Result<FlattenedDownloadArgs> {
+        Ok(FlattenedDownloadArgs {
+            download_base_addr: download_args.download_base_addr.unwrap(),
+            download_paths: download_args.download_paths.unwrap(),
+            download_rnti_share_types: download_args.download_rnti_share_types.unwrap(),
         })
     }
 }

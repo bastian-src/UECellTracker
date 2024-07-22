@@ -1,7 +1,7 @@
 use crate::cell_info::CellInfo;
 use crate::logger::log_metric;
 use crate::ngscope::types::{NgScopeCellDci, NgScopeRntiDci};
-use crate::parse::{Arguments, DynamicValue, FlattenedModelArgs};
+use crate::parse::{Arguments, DynamicValue, FlattenedModelArgs, Scenario};
 use crate::util::{print_debug, print_info};
 use std::collections::HashSet;
 use std::sync::mpsc::{SyncSender, TryRecvError};
@@ -12,7 +12,7 @@ use anyhow::{anyhow, Result};
 use bus::{Bus, BusReader};
 use serde_derive::{Deserialize, Serialize};
 
-use super::{MetricA, MetricTypes};
+use super::{MessageDownloadConfig, MetricA, MetricTypes};
 use crate::logic::{
     check_not_stopped, wait_until_running, MainState, MessageCellInfo, MessageDci, MessageMetric,
     MessageRnti, ModelState, DEFAULT_WORKER_SLEEP_US,
@@ -112,6 +112,7 @@ pub struct ModelHandlerArgs {
     pub rx_cell_info: BusReader<MessageCellInfo>,
     pub rx_dci: BusReader<MessageDci>,
     pub rx_rnti: BusReader<MessageRnti>,
+    pub rx_download_config: BusReader<MessageDownloadConfig>,
     pub tx_metric: Bus<MessageMetric>,
 }
 
@@ -122,6 +123,7 @@ struct RunArgs {
     pub rx_cell_info: BusReader<MessageCellInfo>,
     pub rx_dci: BusReader<MessageDci>,
     pub rx_rnti: BusReader<MessageRnti>,
+    pub rx_download_config: BusReader<MessageDownloadConfig>,
     pub tx_metric: Bus<MessageMetric>,
 }
 
@@ -137,8 +139,9 @@ struct RunParametersSendingBehavior<'a> {
     metric_sending_interval_us: &'a mut u64,
     metric_smoothing_size_ms: &'a mut u64,
     last_metric_timestamp_us: &'a mut u64,
-    model_args: &'a FlattenedModelArgs,
+    rnti_share_type: &'a u8,
     last_rtt_us: &'a Option<u64>,
+    model_args: &'a FlattenedModelArgs,
 }
 
 pub fn deploy_model_handler(args: ModelHandlerArgs) -> Result<JoinHandle<()>> {
@@ -149,6 +152,7 @@ pub fn deploy_model_handler(args: ModelHandlerArgs) -> Result<JoinHandle<()>> {
         rx_cell_info: args.rx_cell_info,
         rx_dci: args.rx_dci,
         rx_rnti: args.rx_rnti,
+        rx_download_config: args.rx_download_config,
         tx_metric: args.tx_metric,
     };
 
@@ -178,6 +182,8 @@ fn run(run_args: &mut RunArgs) -> Result<()> {
     let rx_cell_info: &mut BusReader<MessageCellInfo> = &mut run_args.rx_cell_info;
     let rx_dci: &mut BusReader<MessageDci> = &mut run_args.rx_dci;
     let rx_rnti: &mut BusReader<MessageRnti> = &mut run_args.rx_rnti;
+    let rx_download_config: &mut BusReader<MessageDownloadConfig> =
+        &mut run_args.rx_download_config;
     let tx_metric: &mut Bus<MessageMetric> = &mut run_args.tx_metric;
 
     tx_model_state.send(ModelState::Running)?;
@@ -186,14 +192,15 @@ fn run(run_args: &mut RunArgs) -> Result<()> {
     let sleep_duration = Duration::from_micros(DEFAULT_WORKER_SLEEP_US);
 
     let model_args = FlattenedModelArgs::from_unflattened(app_args.clone().model.unwrap())?;
+    let scenario = app_args.scenario.unwrap();
 
     let is_log_metric: bool = model_args.model_log_metric;
     let mut last_metric_timestamp_us: u64 = chrono::Utc::now().timestamp_micros() as u64;
     let mut dci_buffer = DciRingBuffer::new();
     let mut last_rnti: Option<u16> = None;
     let mut last_cell_info: Option<CellInfo> = None;
-    let last_rtt_us: Option<u64> = Some(40000); // TODO: Replace test-RTT with actual RTT and make
-                                                // it mutable
+    let mut last_rnti_share_type: u8 = RNTI_SHARE_TYPE_ALL;
+    let mut last_rtt_us: Option<u64> = Some(40000);
     let mut metric_sending_interval_us: u64 = determine_sending_interval(&model_args, &last_rtt_us);
     let mut metric_smoothing_size_ms: u64 = determine_smoothing_size(&model_args, &last_rtt_us);
 
@@ -203,10 +210,6 @@ fn run(run_args: &mut RunArgs) -> Result<()> {
         if check_not_stopped(rx_app_state).is_err() {
             break;
         }
-        /* </precheck> */
-
-        /* unpack dci, cell_info, rnti at every iteration to keep the queue "empty"! */
-        // TODO: Unpack the RTT too
         match rx_dci.try_recv() {
             Ok(dci) => {
                 dci_buffer.push(dci.ngscope_dci);
@@ -232,6 +235,18 @@ fn run(run_args: &mut RunArgs) -> Result<()> {
             Err(TryRecvError::Empty) => {}
             Err(TryRecvError::Disconnected) => break,
         };
+        match rx_download_config.try_recv() {
+            Ok(download_config) => {
+                last_rtt_us = Some(download_config.config.rtt_us);
+                last_rnti_share_type = download_config.config.rnti_share_type;
+            }
+            Err(TryRecvError::Empty) => {}
+            Err(TryRecvError::Disconnected) => break,
+        };
+        if is_idle_scenario(scenario) {
+            continue;
+        }
+        /* </precheck> */
 
         if let (Some(rnti), Some(cell_info)) = (last_rnti, last_cell_info.clone()) {
             let delta_last_metric_sent_us =
@@ -249,6 +264,7 @@ fn run(run_args: &mut RunArgs) -> Result<()> {
                     metric_sending_interval_us: &mut metric_sending_interval_us,
                     metric_smoothing_size_ms: &mut metric_smoothing_size_ms,
                     last_metric_timestamp_us: &mut last_metric_timestamp_us,
+                    rnti_share_type: &last_rnti_share_type,
                     model_args: &model_args,
                     last_rtt_us: &last_rtt_us,
                 };
@@ -258,6 +274,14 @@ fn run(run_args: &mut RunArgs) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn is_idle_scenario(scenario: Scenario) -> bool {
+    match scenario {
+        Scenario::TrackCellDciOnly => true,
+        Scenario::TrackUeAndEstimateTransportCapacity => false,
+        Scenario::PerformMeasurement => false,
+    }
 }
 
 fn finish(run_args: RunArgs) {
@@ -281,6 +305,7 @@ fn handle_calculate_metric(
         metric_sending_interval_us,
         metric_smoothing_size_ms,
         last_metric_timestamp_us,
+        rnti_share_type,
         model_args,
         last_rtt_us,
     } = sending_behavior;
@@ -288,9 +313,13 @@ fn handle_calculate_metric(
     let buffer_slice_size: usize = **metric_smoothing_size_ms as usize;
     let buffer_slice = dci_buffer.slice(buffer_slice_size);
     if !buffer_slice.is_empty() {
-        if let Ok(metric_wrapper) =
-            calculate_capacity(*rnti, cell_info, buffer_slice, is_log_metric)
-        {
+        if let Ok(metric_wrapper) = calculate_capacity(
+            *rnti,
+            cell_info,
+            buffer_slice,
+            is_log_metric,
+            rnti_share_type,
+        ) {
             let transport_capacity = metric_wrapper
                 .result
                 .transport_fair_share_capacity_bit_per_ms;
@@ -325,9 +354,10 @@ fn calculate_capacity(
     cell_info: &CellInfo,
     dci_list: &[NgScopeCellDci],
     is_log_metric: &bool,
+    rnti_share_type: &u8,
 ) -> Result<LogMetric> {
     let metric_wrapper =
-        calculate_pbe_cc_capacity(target_rnti, cell_info, dci_list, RNTI_SHARE_TYPE_ALL)?;
+        calculate_pbe_cc_capacity(target_rnti, cell_info, dci_list, rnti_share_type)?;
     if *is_log_metric {
         let _ = log_metric(metric_wrapper.clone());
     }
@@ -371,7 +401,7 @@ fn calculate_pbe_cc_capacity(
     target_rnti: u16,
     cell_info: &CellInfo,
     dci_list: &[NgScopeCellDci],
-    rnti_share_type: u8,
+    rnti_share_type: &u8,
 ) -> Result<LogMetric> {
     let nof_dci: u64 = dci_list.len() as u64;
     if nof_dci == 0 {
@@ -503,7 +533,7 @@ fn calculate_pbe_cc_capacity(
             nof_dci,
             p_cell,
             nof_rnti_shared,
-            rnti_share_type,
+            rnti_share_type: *rnti_share_type,
             p_alloc,
             p_alloc_no_tbs,
             tbs_alloc_bit,
@@ -594,8 +624,13 @@ mod tests {
                 ..Default::default()
             }],
         };
-        let metric_params =
-            calculate_capacity(dummy_rnti, &dummy_cell_info, &dummy_dci_slice(), &false)?;
+        let metric_params = calculate_capacity(
+            dummy_rnti,
+            &dummy_cell_info,
+            &dummy_dci_slice(),
+            &false,
+            &RNTI_SHARE_TYPE_ALL,
+        )?;
         assert_eq!(
             metric_params.result.physical_fair_share_capacity_bit_per_ms,
             33621

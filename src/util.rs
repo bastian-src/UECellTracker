@@ -1,14 +1,17 @@
 #![allow(dead_code)]
 
-use anyhow::{anyhow, Result};
-use casual_logger::{Level, Log};
-use lazy_static::lazy_static;
 use std::collections::{HashMap, VecDeque};
 use std::fs::{File, OpenOptions};
 use std::hash::Hash;
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+
+use anyhow::{anyhow, Result};
+use casual_logger::{Level, Log};
+use lazy_static::lazy_static;
+use libc::{c_void, getsockopt, socklen_t, TCP_INFO};
+use std::mem;
 
 use crate::logger::log_info;
 use crate::logic::rnti_matcher::TrafficCollection;
@@ -26,6 +29,51 @@ pub struct RingBuffer<T> {
 pub struct CellRntiRingBuffer {
     cell_buffers: HashMap<u64, RingBuffer<u16>>,
     size: usize,
+}
+
+#[repr(C)]
+#[derive(Debug, Default)]
+pub struct StockTcpInfo {
+    pub tcpi_state: u8,
+    pub tcpi_ca_state: u8,
+    pub tcpi_retransmits: u8,
+    pub tcpi_probes: u8,
+    pub tcpi_backoff: u8,
+    pub tcpi_options: u8,
+    pub tcpi_snd_wscale: u8,
+    pub tcpi_rcv_wscale: u8,
+
+    pub tcpi_rto: u32,
+    pub tcpi_ato: u32,
+    pub tcpi_snd_mss: u32,
+    pub tcpi_rcv_mss: u32,
+
+    pub tcpi_unacked: u32,
+    pub tcpi_sacked: u32,
+    pub tcpi_lost: u32,
+    pub tcpi_retrans: u32,
+    pub tcpi_fackets: u32,
+
+    // Times
+    pub tcpi_last_data_sent: u32,
+    pub tcpi_last_ack_sent: u32,
+    pub tcpi_last_data_recv: u32,
+    pub tcpi_last_ack_recv: u32,
+
+    // Metrics
+    pub tcpi_pmtu: u32,
+    pub tcpi_rcv_ssthresh: u32,
+    pub tcpi_rtt: u32,
+    pub tcpi_rttvar: u32,
+    pub tcpi_snd_ssthresh: u32,
+    pub tcpi_snd_cwnd: u32,
+    pub tcpi_advmss: u32,
+    pub tcpi_reordering: u32,
+
+    pub tcpi_rcv_rtt: u32,
+    pub tcpi_rcv_space: u32,
+
+    pub tcpi_total_retrans: u32,
 }
 
 impl<T> RingBuffer<T>
@@ -202,4 +250,32 @@ pub fn set_debug(level: bool) {
 
 pub fn is_debug() -> bool {
     IS_DEBUG.load(Ordering::SeqCst)
+}
+
+pub fn sockopt_get_tcp_info(socket_file_descriptor: i32) -> Result<StockTcpInfo> {
+    let mut tcp_info: StockTcpInfo = StockTcpInfo::default();
+    let mut tcp_info_len = mem::size_of::<StockTcpInfo>() as socklen_t;
+
+    let ret = unsafe {
+        getsockopt(
+            socket_file_descriptor,
+            libc::IPPROTO_TCP,
+            TCP_INFO,
+            &mut tcp_info as *mut _ as *mut c_void,
+            &mut tcp_info_len,
+        )
+    };
+
+    // Check if getsockopt was successful
+    if ret != 0 {
+        return Err(anyhow!("An error occured running libc::getsockopt"));
+    }
+    Ok(tcp_info)
+}
+
+pub fn init_heap_buffer(size: usize) -> Box<[u8]> {
+    let mut vec: Vec<u8> = Vec::<u8>::with_capacity(size);
+    /* Fill the vector with zeros */
+    vec.resize_with(size, || 0);
+    vec.into_boxed_slice()
 }
