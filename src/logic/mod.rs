@@ -13,7 +13,10 @@ use crate::logic::rnti_matcher::TrafficCollection;
 use crate::ngscope::config::NgScopeConfig;
 use crate::ngscope::types::NgScopeCellDci;
 
+use self::downloader::{DownloadConfig, DownloadFinishParameters};
+
 pub mod cell_source;
+pub mod downloader;
 pub mod model_handler;
 pub mod ngscope_controller;
 pub mod rnti_matcher;
@@ -233,6 +236,32 @@ impl WorkerState for NgControlState {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum DownloaderState {
+    Stopped,
+    Ready,
+    SleepMs(u64, Box<DownloaderState>),
+    StartDownload,
+    ErrorStartingDownload(String),
+    Downloading,
+    FinishDownload(DownloadFinishParameters),
+}
+
+impl WorkerState for DownloaderState {
+    fn worker_name() -> String {
+        "download".to_owned()
+    }
+
+    fn to_general_state(&self) -> GeneralState {
+        match self {
+            DownloaderState::Ready => GeneralState::Running,
+            DownloaderState::SleepMs(_, _) => GeneralState::Running,
+            DownloaderState::Stopped => GeneralState::Stopped,
+            _ => GeneralState::Unknown,
+        }
+    }
+}
+
 /*  --------------  */
 /* Worker Messaging */
 /*  --------------  */
@@ -266,6 +295,12 @@ pub struct MessageMetric {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum MetricTypes {
     A(MetricA),
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct MessageDownloadConfig {
+    config: DownloadConfig,
 }
 
 #[repr(C)]

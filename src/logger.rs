@@ -14,6 +14,7 @@ use arrow::datatypes::{DataType, Field, Fields, Schema};
 use arrow::ipc::writer::FileWriter;
 use arrow::record_batch::RecordBatch;
 
+use crate::logic::downloader::DownloadFinishParameters;
 use crate::logic::model_handler::LogMetric;
 use crate::logic::rnti_matcher::TrafficCollection;
 use crate::ngscope::types::NgScopeRntiDci;
@@ -37,8 +38,7 @@ const LOGGER_RELATIVE_PATH_INFO: &str = "stdout/";
 const LOGGER_RELATIVE_PATH_DCI: &str = "dci/";
 const LOGGER_RELATIVE_PATH_RNTI_MATCHING: &str = "rnti_matching/";
 const LOGGER_RELATIVE_PATH_METRIC: &str = "metric/";
-// TODO: Implement saving measurements data
-// const LOGGER_RELATIVE_PATH_MEASUREMENT: &str = "measurements/";
+const LOGGER_RELATIVE_PATH_DOWNLOAD: &str = "download/";
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum LoggerState {
@@ -100,8 +100,8 @@ pub enum LogMessage {
     RntiMatchingTrafficCollection(Box<TrafficCollection>),
     /// Model Metric
     Metric(Box<LogMetric>),
-    // Measurement transmission data (RTT)
-    // LogDataTransmission(Box<NgScopeCellDci>),
+    /// Measurement transmission data (RTT)
+    DownloadStatistics(Box<DownloadFinishParameters>),
 }
 
 /*
@@ -241,6 +241,10 @@ pub fn log_dci(dcis: Vec<NgScopeCellDci>) -> Result<()> {
     Logger::queue_log_message(LogMessage::NgScopeDci(dcis))
 }
 
+pub fn log_download(download: DownloadFinishParameters) -> Result<()> {
+    Logger::queue_log_message(LogMessage::DownloadStatistics(Box::new(download)))
+}
+
 #[allow(unknown_lints)]
 pub fn get_logger() -> &'static mut Lazy<Logger> {
     static mut GLOBAL_LOGGER: Lazy<Logger> = Lazy::new(|| {
@@ -339,6 +343,7 @@ impl LogMessage {
             LogMessage::NgScopeDci(_) => "ngscope dci",
             LogMessage::RntiMatchingTrafficCollection(_) => "rnti traffic collection",
             LogMessage::Metric(_) => "metric",
+            LogMessage::DownloadStatistics(_) => "download",
         }
         .to_string()
     }
@@ -372,6 +377,12 @@ impl LogMessage {
                     LOGGER_RELATIVE_PATH_RNTI_MATCHING, run_timestamp_formatted
                 )
             }
+            LogMessage::DownloadStatistics(_) => {
+                format!(
+                    "{}run_{}_download.jsonl",
+                    LOGGER_RELATIVE_PATH_DOWNLOAD, run_timestamp_formatted
+                )
+            }
         };
         format!("{}{}", base_dir, message_type_file_path)
     }
@@ -390,6 +401,10 @@ impl LogMessage {
             }
             LogMessage::Metric(metric) => {
                 let json_string = serde_json::to_string(metric)?;
+                writeln!(file, "{}", json_string)?;
+            }
+            LogMessage::DownloadStatistics(download) => {
+                let json_string = serde_json::to_string(download)?;
                 writeln!(file, "{}", json_string)?;
             }
         }

@@ -2,6 +2,7 @@ use anyhow::{anyhow, Result};
 use bus::{Bus, BusReader};
 use casual_logger::{Level, Log};
 use logger::{deploy_logger, LoggerArgs, LoggerState};
+use logic::downloader::{deploy_downloader, DownloaderArgs};
 use std::collections::HashSet;
 use std::error::Error;
 use std::fs;
@@ -24,9 +25,10 @@ use logic::model_handler::{deploy_model_handler, ModelHandlerArgs};
 use logic::ngscope_controller::{deploy_ngscope_controller, NgControlArgs};
 use logic::rnti_matcher::{deploy_rnti_matcher, RntiMatcherArgs};
 use logic::{
-    GeneralState, MainState, MessageCellInfo, MessageDci, MessageRnti, ModelState, NgControlState,
-    RntiMatcherState, SourceState, WorkerState, BUS_SIZE_APP_STATE, BUS_SIZE_CELL_INFO,
-    BUS_SIZE_DCI, BUS_SIZE_RNTI, CHANNEL_SYNC_SIZE, WORKER_SLEEP_LONG_MS,
+    DownloaderState, GeneralState, MainState, MessageCellInfo, MessageDci, MessageDownloadConfig,
+    MessageRnti, ModelState, NgControlState, RntiMatcherState, SourceState, WorkerState,
+    BUS_SIZE_APP_STATE, BUS_SIZE_CELL_INFO, BUS_SIZE_DCI, BUS_SIZE_RNTI, CHANNEL_SYNC_SIZE,
+    WORKER_SLEEP_LONG_MS,
 };
 use logic::{MessageMetric, WorkerChannel, BUS_SIZE_METRIC};
 use parse::Arguments;
@@ -38,6 +40,7 @@ struct CombinedReceivers {
     pub rntimatcher: Receiver<RntiMatcherState>,
     pub ngcontrol: Receiver<NgControlState>,
     pub logger: Receiver<LoggerState>,
+    pub downloader: Receiver<DownloaderState>,
 }
 
 struct CombinedSenders {
@@ -46,6 +49,7 @@ struct CombinedSenders {
     pub rntimatcher: SyncSender<RntiMatcherState>,
     pub ngcontrol: SyncSender<NgControlState>,
     pub logger: SyncSender<LoggerState>,
+    pub downloader: SyncSender<DownloaderState>,
 }
 
 impl CombinedReceivers {
@@ -55,6 +59,7 @@ impl CombinedReceivers {
         let _ = &self.ngcontrol.worker_print_on_recv();
         let _ = &self.rntimatcher.worker_print_on_recv();
         let _ = &self.logger.worker_print_on_recv();
+        let _ = &self.downloader.worker_print_on_recv();
     }
 }
 
@@ -67,6 +72,8 @@ fn deploy_app(
     let mut tx_cell_info: Bus<MessageCellInfo> = Bus::<MessageCellInfo>::new(BUS_SIZE_CELL_INFO);
     let mut tx_rnti: Bus<MessageRnti> = Bus::<MessageRnti>::new(BUS_SIZE_RNTI);
     let mut tx_metric: Bus<MessageMetric> = Bus::<MessageMetric>::new(BUS_SIZE_METRIC);
+    let mut tx_download_config: Bus<MessageDownloadConfig> =
+        Bus::<MessageDownloadConfig>::new(BUS_SIZE_METRIC);
     let rx_metric: BusReader<MessageMetric> = tx_metric.add_rx();
 
     let logger_args = LoggerArgs {
@@ -82,6 +89,7 @@ fn deploy_app(
         rx_dci: tx_dci.add_rx(),
         rx_rnti: tx_rnti.add_rx(),
         tx_metric,
+        rx_download_config: tx_download_config.add_rx(),
     };
     let rntimatcher_args = RntiMatcherArgs {
         app_args: app_args.clone(),
@@ -104,6 +112,12 @@ fn deploy_app(
         tx_source_state: all_tx_states.source,
         tx_cell_info,
     };
+    let downloader_args = DownloaderArgs {
+        app_args: app_args.clone(),
+        rx_app_state: tx_app_state.add_rx(),
+        tx_downloader_state: all_tx_states.downloader,
+        tx_download_config,
+    };
 
     let tasks: Vec<JoinHandle<()>> = vec![
         deploy_ngscope_controller(ngcontrol_args)?,
@@ -111,6 +125,7 @@ fn deploy_app(
         deploy_model_handler(model_args)?,
         deploy_rnti_matcher(rntimatcher_args)?,
         deploy_logger(logger_args)?,
+        deploy_downloader(downloader_args)?,
     ];
     Ok(tasks)
 }
@@ -147,10 +162,16 @@ fn wait_all_running(
 ) -> Result<()> {
     print_info("[ ] waiting for all threads to become ready");
 
-    let mut waiting_for: HashSet<&str> =
-        vec!["source", "model", "rntimatcher", "ngcontrol", "logger"]
-            .into_iter()
-            .collect();
+    let mut waiting_for: HashSet<&str> = vec![
+        "source",
+        "model",
+        "rntimatcher",
+        "ngcontrol",
+        "logger",
+        "downloader",
+    ]
+    .into_iter()
+    .collect();
 
     while !waiting_for.is_empty() {
         if is_notifier(sigint_notifier) {
@@ -183,6 +204,11 @@ fn wait_all_running(
                 waiting_for.remove("logger");
             }
         }
+        if waiting_for.contains("downloader") {
+            if let Ok(Some(_)) = check_running(&all_rx_states.downloader) {
+                waiting_for.remove("downloader");
+            }
+        }
     }
 
     print_info("[✓] waiting for all threads to become ready");
@@ -210,12 +236,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     let (rntimatcher_tx, rntimatcher_rx) = sync_channel::<RntiMatcherState>(CHANNEL_SYNC_SIZE);
     let (ngcontrol_tx, ngcontrol_rx) = sync_channel::<NgControlState>(CHANNEL_SYNC_SIZE);
     let (logger_tx, logger_rx) = sync_channel::<LoggerState>(CHANNEL_SYNC_SIZE);
+    let (downloader_tx, downloader_rx) = sync_channel::<DownloaderState>(CHANNEL_SYNC_SIZE);
     let all_tx_states = CombinedSenders {
         model: model_tx,
         source: source_tx,
         rntimatcher: rntimatcher_tx,
         ngcontrol: ngcontrol_tx,
         logger: logger_tx,
+        downloader: downloader_tx,
     };
     let all_rx_states = CombinedReceivers {
         model: model_rx,
@@ -223,6 +251,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         rntimatcher: rntimatcher_rx,
         ngcontrol: ngcontrol_rx,
         logger: logger_rx,
+        downloader: downloader_rx,
     };
 
     let tasks = deploy_app(&mut tx_app_state, &args, all_tx_states)?;
