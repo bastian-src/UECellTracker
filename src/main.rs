@@ -1,11 +1,9 @@
 use anyhow::{anyhow, Result};
 use bus::{Bus, BusReader};
-use casual_logger::{Level, Log};
 use logger::{deploy_logger, LoggerArgs, LoggerState};
 use logic::downloader::{deploy_downloader, DownloaderArgs};
 use std::collections::HashSet;
 use std::error::Error;
-use std::fs;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::Arc;
@@ -215,15 +213,7 @@ fn wait_all_running(
     Ok(())
 }
 
-fn init_logger() -> Result<()> {
-    fs::create_dir_all("./.logs")?;
-    Log::set_file_name("./.logs/log");
-    Log::set_level(Level::Debug);
-    Ok(())
-}
-
 fn main() -> Result<(), Box<dyn Error>> {
-    init_logger()?;
     print_info("Hello, world!");
     let args: Arguments = Arguments::build()?;
     set_debug(args.verbose.unwrap());

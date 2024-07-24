@@ -1,9 +1,7 @@
 #![allow(dead_code)]
 
 use std::collections::{HashMap, VecDeque};
-use std::fs::{File, OpenOptions};
 use std::hash::Hash;
-use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -14,10 +12,6 @@ use libc::{c_void, getsockopt, socklen_t, TCP_INFO};
 use std::mem;
 
 use crate::logger::log_info;
-use crate::logic::rnti_matcher::TrafficCollection;
-
-pub const MATCHING_LOG_FILE_PREFIX: &str = "./.logs/rnti_matching_pattern_";
-pub const MATCHING_LOG_FILE_SUFFIX: &str = ".jsonl";
 
 #[derive(Clone, Debug, Default)]
 pub struct RingBuffer<T> {
@@ -215,29 +209,6 @@ impl LogExt for Log {
         }
         Log::debugln(s);
     }
-}
-
-pub fn log_rnti_matching_traffic(traffic_collection: &TrafficCollection) -> Result<()> {
-    let matching_log_file_path = &format!(
-        "{}{:?}{}",
-        MATCHING_LOG_FILE_PREFIX,
-        traffic_collection.traffic_pattern_features.pattern_type,
-        MATCHING_LOG_FILE_SUFFIX
-    );
-
-    print_debug(&format!(
-        "DEBUG [rntimatcher] going to write traffic to file: {:?}",
-        matching_log_file_path
-    ));
-    let json_string = serde_json::to_string(traffic_collection)?;
-
-    let mut file: File = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(matching_log_file_path)?;
-    writeln!(file, "{}", json_string)?;
-
-    Ok(())
 }
 
 lazy_static! {
