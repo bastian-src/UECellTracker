@@ -7,7 +7,7 @@ use std::{default, error::Error, path::PathBuf};
 use crate::{logic::traffic_patterns::RntiMatchingTrafficPatternType, util::print_debug};
 
 pub const DEFAULT_SCENARIO: Scenario = Scenario::TrackUeAndEstimateTransportCapacity;
-pub const DEFAULT_LOG_BASE_DIR: &str = "./.logs/";
+pub const DEFAULT_LOG_BASE_DIR: &str = "./.logs.ue/";
 pub const DEFAULT_DOWNLOAD_BASE_ADDR: &str = "http://some.addr";
 pub const DEFAULT_DOWNLOAD_PATHS: &[&str] = &[
     ":9393/cubic",
