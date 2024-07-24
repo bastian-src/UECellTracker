@@ -48,13 +48,13 @@ pub struct DownloadingParameters<'a> {
 
 #[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
 pub struct DownloadFinishParameters {
-    base_addr: String,
-    path: String,
-    start_timestamp_us: u64,
-    finish_timestamp_us: u64,
-    average_rtt_us: u64,
-    total_download_bytes: u64,
-    timedata: HashMap<u64, TcpLogStats>,
+    pub base_addr: String,
+    pub path: String,
+    pub start_timestamp_us: u64,
+    pub finish_timestamp_us: u64,
+    pub average_rtt_us: u64,
+    pub total_download_bytes: u64,
+    pub timedata: HashMap<u64, TcpLogStats>,
 }
 
 #[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
@@ -139,8 +139,6 @@ fn run(run_args: &mut RunArgs) -> Result<()> {
     let base_addr = download_args.download_base_addr;
     let mut path_list_index = 0;
     let paths = download_args.download_paths;
-    let mut rnti_share_type_index = 0;
-    let rnti_share_types = download_args.download_rnti_share_types;
 
     let mut downloader_state = DownloaderState::SleepMs(
         INITIAL_SLEEP_TIME_MS,
@@ -149,7 +147,7 @@ fn run(run_args: &mut RunArgs) -> Result<()> {
     let mut current_download: DownloadStreamState = DownloadStreamState {
         base_addr: base_addr.clone(),
         path: paths[path_list_index].clone(),
-        rnti_share_type: rnti_share_types[rnti_share_type_index],
+        rnti_share_type: determine_rnti_fair_share_type_by_path(&paths[path_list_index]),
         start_timestamp_us: 0,
         timedata: HashMap::new(),
     };
@@ -176,10 +174,11 @@ fn run(run_args: &mut RunArgs) -> Result<()> {
                 *next_state
             }
             DownloaderState::StartDownload => {
+                let download_path = paths[path_list_index].clone();
                 current_download = DownloadStreamState {
                     base_addr: base_addr.clone(),
-                    path: paths[path_list_index].clone(),
-                    rnti_share_type: rnti_share_types[rnti_share_type_index],
+                    path: download_path.clone(),
+                    rnti_share_type: determine_rnti_fair_share_type_by_path(&download_path),
                     start_timestamp_us: 0,
                     timedata: HashMap::new(),
                 };
@@ -195,13 +194,7 @@ fn run(run_args: &mut RunArgs) -> Result<()> {
                 handle_downloading(params)
             }
             DownloaderState::FinishDownload(params) => {
-                if path_list_index >= (paths.len() - 1) {
-                    // Iterate paths first, and then rnti_share at overflow
-                    path_list_index = 0;
-                    rnti_share_type_index = (rnti_share_type_index + 1) % rnti_share_types.len()
-                } else {
-                    path_list_index += 1;
-                }
+                path_list_index = (path_list_index + 1) % paths.len();
                 *stream_handle = None;
                 handle_finish_download(params)
             }
@@ -350,4 +343,12 @@ fn determine_socket_rtt(stream: &mut TcpStream) -> Result<u64> {
     let socket_file_descriptor: i32 = stream.as_raw_fd();
     let tcp_info = sockopt_get_tcp_info(socket_file_descriptor)?;
     Ok(tcp_info.tcpi_rtt.into())
+}
+
+fn determine_rnti_fair_share_type_by_path(path: &str) -> u8 {
+    if path.contains("fair1") {
+        1
+    } else {
+        0
+    }
 }

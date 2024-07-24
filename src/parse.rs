@@ -10,13 +10,27 @@ pub const DEFAULT_SCENARIO: Scenario = Scenario::TrackUeAndEstimateTransportCapa
 pub const DEFAULT_LOG_BASE_DIR: &str = "./.logs.ue/";
 pub const DEFAULT_DOWNLOAD_BASE_ADDR: &str = "http://some.addr";
 pub const DEFAULT_DOWNLOAD_PATHS: &[&str] = &[
-    ":9393/cubic",
-    ":9393/bbr",
-    ":9393/pbe/init",
-    ":9393/pbe/init_and_upper",
-    ":9393/pbe/direct",
+    "/10s/cubic",
+    "/10s/bbr",
+    "/10s/pbe/fair0/init",
+    "/10s/pbe/fair0/upper",
+    "/10s/pbe/fair0/init_and_upper",
+    "/10s/pbe/fair0/direct",
+    "/10s/pbe/fair1/init",
+    "/10s/pbe/fair1/upper",
+    "/10s/pbe/fair1/init_and_upper",
+    "/10s/pbe/fair1/direct",
+    "/60s/cubic",
+    "/60s/bbr",
+    "/60s/pbe/fair0/init",
+    "/60s/pbe/fair0/upper",
+    "/60s/pbe/fair0/init_and_upper",
+    "/60s/pbe/fair0/direct",
+    "/60s/pbe/fair1/init",
+    "/60s/pbe/fair1/upper",
+    "/60s/pbe/fair1/init_and_upper",
+    "/60s/pbe/fair1/direct",
 ];
-pub const DEFAULT_DOWNLOAD_RNTI_SHARE_TYPES: &[u8] = &[0, 1];
 
 #[derive(Debug, Clone, PartialEq, Parser, Serialize, Deserialize)]
 #[command(author, version, about, long_about = None, next_line_help = true)]
@@ -244,15 +258,12 @@ pub struct DownloadArgs {
     pub download_base_addr: Option<String>,
     /// List of paths to call on the base address
     pub download_paths: Option<Vec<String>>,
-    /// List of RNTI Share Type configurations to run
-    pub download_rnti_share_types: Option<Vec<u8>>,
 }
 
 #[derive(Clone, Debug)]
 pub struct FlattenedDownloadArgs {
     pub download_base_addr: String,
     pub download_paths: Vec<String>,
-    pub download_rnti_share_types: Vec<u8>,
 }
 
 impl default::Default for Arguments {
@@ -303,7 +314,6 @@ impl default::Default for Arguments {
                         .map(|path| path.to_string())
                         .collect(),
                 ),
-                download_rnti_share_types: Some(DEFAULT_DOWNLOAD_RNTI_SHARE_TYPES.to_vec()),
             }),
         }
     }
@@ -449,7 +459,6 @@ impl FlattenedDownloadArgs {
         Ok(FlattenedDownloadArgs {
             download_base_addr: download_args.download_base_addr.unwrap(),
             download_paths: download_args.download_paths.unwrap(),
-            download_rnti_share_types: download_args.download_rnti_share_types.unwrap(),
         })
     }
 }

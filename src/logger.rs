@@ -377,10 +377,11 @@ impl LogMessage {
                     LOGGER_RELATIVE_PATH_RNTI_MATCHING, run_timestamp_formatted
                 )
             }
-            LogMessage::DownloadStatistics(_) => {
+            LogMessage::DownloadStatistics(finish_parameters) => {
                 format!(
-                    "{}run_{}_download.jsonl",
-                    LOGGER_RELATIVE_PATH_DOWNLOAD, run_timestamp_formatted
+                    "{}run_{}_download_{}.jsonl",
+                    LOGGER_RELATIVE_PATH_DOWNLOAD, run_timestamp_formatted,
+                    finish_parameters.path.replace('/', "_")
                 )
             }
         };
