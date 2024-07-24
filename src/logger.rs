@@ -253,12 +253,16 @@ pub fn get_logger() -> &'static mut Lazy<Logger> {
             .map(|_| Mutex::new(tx.clone()))
             .collect();
 
+        let run_timestamp = chrono::Utc::now();
+        let run_timestamp_formatted = run_timestamp.format("%Y_%m_%d-%H_%M_%S").to_string();
+        let base_dir = format!("{}run-{}/", DEFAULT_LOG_BASE_DIR, run_timestamp_formatted);
+
         Logger {
-            base_dir: DEFAULT_LOG_BASE_DIR.to_string(),
+            base_dir,
             rx: Mutex::new(rx),
             tx_vec,
             stdout_file: None,
-            run_timestamp: chrono::Utc::now(),
+            run_timestamp,
         }
     });
     #[allow(static_mut_refs)]
@@ -279,7 +283,8 @@ impl Logger {
     }
 
     pub fn set_base_dir(new_base_dir: String) {
-        get_logger().base_dir = new_base_dir;
+        let run_timestamp_formatted = get_logger().run_timestamp.format("%Y_%m_%d-%H_%M_%S").to_string();
+        get_logger().base_dir = format!("{}run-{}/", new_base_dir, run_timestamp_formatted);
     }
 
     pub fn queue_log_message(msg: LogMessage) -> Result<()> {
