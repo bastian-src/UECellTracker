@@ -1,4 +1,5 @@
 use std::os::unix::io::AsRawFd;
+use std::sync::mpsc::TryRecvError;
 use std::{
     collections::HashMap,
     io::{self, Read, Write},
@@ -14,28 +15,37 @@ use serde_derive::{Deserialize, Serialize};
 
 use super::{
     check_not_stopped, wait_until_running, DownloaderState, MainState, MessageDownloadConfig,
-    DEFAULT_WORKER_SLEEP_US,
+    MessageDci, MessageRnti, DEFAULT_WORKER_SLEEP_MS,
 };
+use crate::ngscope::types::NgScopeCellDci;
 use crate::{
     logger::{log_download, log_info},
     parse::{Arguments, FlattenedDownloadArgs, Scenario},
     util::{determine_process_id, init_heap_buffer, print_debug, print_info, sockopt_get_tcp_info},
 };
 
-pub const INITIAL_SLEEP_TIME_MS: u64 = 10000;
+pub const INITIAL_SLEEP_TIME_MS: u64 = 20000;
 pub const READILY_WAITING_SLEEP_TIME_MS: u64 = 500;
 pub const DOWNLOADING_IDLE_SLEEP_TIME_MS: u64 = 20;
 pub const RECOVERY_SLEEP_TIME_MS: u64 = 2000;
+pub const BETWEEN_DOWNLOADS_SLEEP_TIME_MS: u64 = 1000;
 
-pub const TCP_STREAM_READ_BUFFER_SIZE: usize = 16384;
+pub const TCP_STREAM_READ_BUFFER_SIZE: usize = 100000;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Default)]
 pub struct DownloadStreamState {
     pub base_addr: String,
     pub path: String,
     pub rnti_share_type: u8,
+    pub last_rtt_us: Option<u64>,
     pub start_timestamp_us: u64,
-    timedata: HashMap<u64, TcpLogStats>,
+    pub timedata: HashMap<u64, TcpLogStats>,
+    pub dci_total_dl_bit: u64,
+    pub dci_rnti_dl_bit: u64,
+    pub dci_total_dl_prb_with_tbs: u64,
+    pub dci_total_dl_prb_no_tbs: u64,
+    pub dci_rnti_dl_prb_with_tbs: u64,
+    pub dci_rnti_dl_prb_no_tbs: u64,
 }
 
 #[derive(Debug)]
@@ -54,7 +64,12 @@ pub struct DownloadFinishParameters {
     pub finish_timestamp_us: u64,
     pub average_rtt_us: u64,
     pub total_download_bytes: u64,
-    pub timedata: HashMap<u64, TcpLogStats>,
+    pub dci_total_dl_bit: u64,
+    pub dci_rnti_dl_bit: u64,
+    pub dci_total_dl_prb_with_tbs: u64,
+    pub dci_total_dl_prb_no_tbs: u64,
+    pub dci_rnti_dl_prb_with_tbs: u64,
+    pub dci_rnti_dl_prb_no_tbs: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
@@ -66,6 +81,8 @@ pub struct TcpLogStats {
 pub struct DownloaderArgs {
     pub app_args: Arguments,
     pub rx_app_state: BusReader<MainState>,
+    pub rx_dci: BusReader<MessageDci>,
+    pub rx_rnti: BusReader<MessageRnti>,
     pub tx_downloader_state: SyncSender<DownloaderState>,
     pub tx_download_config: Bus<MessageDownloadConfig>,
 }
@@ -73,6 +90,8 @@ pub struct DownloaderArgs {
 struct RunArgs {
     pub app_args: Arguments,
     pub rx_app_state: BusReader<MainState>,
+    pub rx_dci: BusReader<MessageDci>,
+    pub rx_rnti: BusReader<MessageRnti>,
     pub tx_downloader_state: SyncSender<DownloaderState>,
     pub tx_download_config: Bus<MessageDownloadConfig>,
     pub stream_handle: Option<TcpStream>,
@@ -88,6 +107,8 @@ pub fn deploy_downloader(args: DownloaderArgs) -> Result<JoinHandle<()>> {
     let mut run_args = RunArgs {
         app_args: args.app_args,
         rx_app_state: args.rx_app_state,
+        rx_dci: args.rx_dci,
+        rx_rnti: args.rx_rnti,
         tx_downloader_state: args.tx_downloader_state,
         tx_download_config: args.tx_download_config,
         stream_handle: None,
@@ -123,6 +144,8 @@ fn wait_for_running(rx_app_state: &mut BusReader<MainState>) -> Result<()> {
 fn run(run_args: &mut RunArgs) -> Result<()> {
     let app_args = &run_args.app_args;
     let rx_app_state: &mut BusReader<MainState> = &mut run_args.rx_app_state;
+    let rx_dci: &mut BusReader<MessageDci> = &mut run_args.rx_dci;
+    let rx_rnti: &mut BusReader<MessageRnti> = &mut run_args.rx_rnti;
     let tx_downloader_state: &mut SyncSender<DownloaderState> = &mut run_args.tx_downloader_state;
     let tx_download_config: &mut Bus<MessageDownloadConfig> = &mut run_args.tx_download_config;
 
@@ -130,7 +153,6 @@ fn run(run_args: &mut RunArgs) -> Result<()> {
     wait_for_running(rx_app_state)?;
     print_info(&format!("[download]: \t\tPID {:?}", determine_process_id()));
 
-    let sleep_duration = Duration::from_micros(DEFAULT_WORKER_SLEEP_US);
     let download_args =
         FlattenedDownloadArgs::from_unflattened(app_args.clone().download.unwrap())?;
     let scenario = app_args.scenario.unwrap();
@@ -144,23 +166,25 @@ fn run(run_args: &mut RunArgs) -> Result<()> {
         INITIAL_SLEEP_TIME_MS,
         Box::new(DownloaderState::StartDownload),
     );
+    let mut current_rnti: Option<u16> = None;
     let mut current_download: DownloadStreamState = DownloadStreamState {
         base_addr: base_addr.clone(),
         path: paths[path_list_index].clone(),
         rnti_share_type: determine_rnti_fair_share_type_by_path(&paths[path_list_index]),
-        start_timestamp_us: 0,
-        timedata: HashMap::new(),
+        ..Default::default()
     };
 
     loop {
         /* <precheck> */
-        thread::sleep(sleep_duration);
         if check_not_stopped(rx_app_state).is_err() {
             break;
         }
+        unpack_all_rnti_messages(rx_rnti, &mut current_rnti)?;
+        unpack_all_dci_messages(rx_dci, &mut current_download, &downloader_state, current_rnti)?;
         if is_idle_scenario(scenario) {
             continue; /* keep the thread running, because the Bus-reference must be kept alive for the model */
         }
+        thread::sleep(Duration::from_millis(DEFAULT_WORKER_SLEEP_MS));
         /* </precheck> */
 
         downloader_state = match downloader_state {
@@ -179,8 +203,7 @@ fn run(run_args: &mut RunArgs) -> Result<()> {
                     base_addr: base_addr.clone(),
                     path: download_path.clone(),
                     rnti_share_type: determine_rnti_fair_share_type_by_path(&download_path),
-                    start_timestamp_us: 0,
-                    timedata: HashMap::new(),
+                    ..Default::default()
                 };
                 handle_start_download(&mut current_download, stream_handle)
             }
@@ -211,6 +234,49 @@ fn run(run_args: &mut RunArgs) -> Result<()> {
     Ok(())
 }
 
+fn unpack_all_rnti_messages(
+    rx_rnti: &mut BusReader<MessageRnti>,
+    rnti_option: &mut Option<u16>
+) -> Result<()> {
+    let mut last_rnti_option: Option<u16> = *rnti_option;
+    loop {
+        match rx_rnti.try_recv() {
+            Ok(rnti_msg) => {
+                if let Some(rnti) = rnti_msg.cell_rnti.values().copied().next() {
+                    print_debug(&format!("DEBUG [download] new RNTI: {}", rnti));
+                    last_rnti_option = Some(rnti);
+                }
+            }
+            Err(TryRecvError::Empty) => break,
+            Err(TryRecvError::Disconnected) => return Err(anyhow!("[download] error: rx_rnti disconnected"))
+        }
+    }
+    *rnti_option = last_rnti_option;
+    Ok(())
+}
+
+fn unpack_all_dci_messages(
+    rx_dci: &mut BusReader<MessageDci>,
+    download_stream_state: &mut DownloadStreamState,
+    downloader_state: &DownloaderState,
+    rnti_option: Option<u16>
+) -> Result<()> {
+
+    loop {
+        match rx_dci.try_recv() {
+            Ok(dci) => {
+                if DownloaderState::Downloading == *downloader_state &&
+                   dci.ngscope_dci.time_stamp >= download_stream_state.start_timestamp_us {
+                    download_stream_state.add_ngscope_dci(dci.ngscope_dci, rnti_option);
+                }
+            }
+            Err(TryRecvError::Empty) => break,
+            Err(TryRecvError::Disconnected) =>  return Err(anyhow!("[download] error: rx_dci disconnected"))
+        };
+    }
+    Ok(())
+}
+
 fn finish(run_args: RunArgs) {
     if let Some(stream) = run_args.stream_handle {
         let _ = stream.shutdown(Shutdown::Both);
@@ -225,7 +291,7 @@ fn handle_finish_download(finish_parameters: DownloadFinishParameters) -> Downlo
             e
         ));
     }
-    DownloaderState::StartDownload
+    DownloaderState::SleepMs(BETWEEN_DOWNLOADS_SLEEP_TIME_MS, Box::new(DownloaderState::StartDownload))
 }
 
 fn handle_start_download(
@@ -237,7 +303,7 @@ fn handle_start_download(
         &download_stream_state.path,
     ) {
         Ok(stream) => {
-            download_stream_state.start_timestamp_us = chrono::Utc::now().timestamp_micros() as u64;
+            download_stream_state.start_timestamp_us = chrono::Local::now().timestamp_micros() as u64;
             *stream_option = Some(stream);
             DownloaderState::Downloading
         }
@@ -257,8 +323,15 @@ fn handle_downloading(params: DownloadingParameters) -> DownloaderState {
                 base_addr,
                 path,
                 rnti_share_type,
+                last_rtt_us,
                 start_timestamp_us,
                 timedata,
+                dci_total_dl_bit,
+                dci_rnti_dl_bit,
+                dci_total_dl_prb_with_tbs,
+                dci_total_dl_prb_no_tbs,
+                dci_rnti_dl_prb_with_tbs,
+                dci_rnti_dl_prb_no_tbs,
             },
     } = params;
 
@@ -266,11 +339,9 @@ fn handle_downloading(params: DownloadingParameters) -> DownloaderState {
         Ok(chunk_size) => {
             if chunk_size == 0 {
                 // End of stream
-                let download_finish_timestamp_us = chrono::Utc::now().timestamp_micros() as u64;
-                let total_download_bytes =
-                    timedata.iter().map(|(_, v)| v.received_bytes).sum::<u64>();
-                let average_rtt_us = (timedata.iter().map(|(_, v)| v.rtt_us).sum::<u64>() as f64
-                    / timedata.len() as f64) as u64;
+                let download_finish_timestamp_us = chrono::Local::now().timestamp_micros() as u64;
+                let total_download_bytes = determine_average_download_bytes(timedata);
+                let average_rtt_us = determine_average_rtt_us(timedata);
                 DownloaderState::FinishDownload(DownloadFinishParameters {
                     base_addr: base_addr.to_string(),
                     path: path.to_string(),
@@ -278,42 +349,59 @@ fn handle_downloading(params: DownloadingParameters) -> DownloaderState {
                     finish_timestamp_us: download_finish_timestamp_us,
                     average_rtt_us,
                     total_download_bytes,
-                    timedata: timedata.clone(),
+                    dci_total_dl_bit: *dci_total_dl_bit,
+                    dci_total_dl_prb_with_tbs: *dci_total_dl_prb_with_tbs,
+                    dci_total_dl_prb_no_tbs: *dci_total_dl_prb_no_tbs,
+                    dci_rnti_dl_bit: *dci_rnti_dl_bit,
+                    dci_rnti_dl_prb_with_tbs: *dci_rnti_dl_prb_with_tbs,
+                    dci_rnti_dl_prb_no_tbs: *dci_rnti_dl_prb_no_tbs,
                 })
             } else {
-                let now_us = chrono::Utc::now().timestamp_micros() as u64;
-                match determine_socket_rtt(stream) {
-                    Ok(rtt_us) => {
-                        timedata.entry(now_us).or_insert(TcpLogStats {
-                            received_bytes: chunk_size as u64,
+                let now_us = chrono::Local::now().timestamp_micros() as u64;
+
+                if let Some(rtt_us) = try_to_decode_rtt(&stream_buffer[0..chunk_size], last_rtt_us) {
+                    timedata.entry(now_us).or_insert(TcpLogStats {
+                        received_bytes: chunk_size as u64,
+                        rtt_us,
+                    });
+                    tx_download_config.broadcast(MessageDownloadConfig {
+                        config: DownloadConfig {
                             rtt_us,
-                        });
-                        tx_download_config.broadcast(MessageDownloadConfig {
-                            config: DownloadConfig {
-                                rtt_us,
-                                rnti_share_type: *rnti_share_type,
-                            },
-                        });
-                    }
-                    Err(e) => {
-                        print_debug(&format!(
-                            "[download] error occured while logging RTT: {:?}. Keep downloading..",
-                            e
-                        ));
-                    }
+                            rnti_share_type: *rnti_share_type,
+                        },
+                    });
+                } else {
+                    print_debug("[download] error occured while logging RTT: \
+                    Cannot decode RTT and no last_rtt given. Keep downloading..");
                 }
                 DownloaderState::Downloading
             }
         }
         Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-            // No data available yet, handle as needed (e.g., sleep or continue looping)
-            DownloaderState::SleepMs(
-                DOWNLOADING_IDLE_SLEEP_TIME_MS,
-                Box::new(DownloaderState::Downloading),
-            )
+            DownloaderState::Downloading
+        }
+        Err(ref e) if e.kind() == io::ErrorKind::ConnectionReset => {
+            // Early reset, handle as server closed the connection
+            let download_finish_timestamp_us = chrono::Local::now().timestamp_micros() as u64;
+            let total_download_bytes = determine_average_download_bytes(timedata);
+            let average_rtt_us = determine_average_rtt_us(timedata);
+            DownloaderState::FinishDownload(DownloadFinishParameters {
+                base_addr: base_addr.to_string(),
+                path: path.to_string(),
+                start_timestamp_us: *start_timestamp_us,
+                finish_timestamp_us: download_finish_timestamp_us,
+                average_rtt_us,
+                total_download_bytes,
+                dci_total_dl_bit: *dci_total_dl_bit,
+                dci_total_dl_prb_with_tbs: *dci_total_dl_prb_with_tbs,
+                dci_total_dl_prb_no_tbs: *dci_total_dl_prb_no_tbs,
+                dci_rnti_dl_bit: *dci_rnti_dl_bit,
+                dci_rnti_dl_prb_with_tbs: *dci_rnti_dl_prb_with_tbs,
+                dci_rnti_dl_prb_no_tbs: *dci_rnti_dl_prb_no_tbs,
+            })
         }
         Err(e) => {
-            DownloaderState::ErrorStartingDownload(format!("Error starting download: {:?}", e))
+            DownloaderState::ErrorStartingDownload(format!("Error during download: {:?}", e))
         }
     }
 }
@@ -342,7 +430,53 @@ fn create_download_stream(base_addr: &str, path: &str) -> Result<TcpStream> {
 fn determine_socket_rtt(stream: &mut TcpStream) -> Result<u64> {
     let socket_file_descriptor: i32 = stream.as_raw_fd();
     let tcp_info = sockopt_get_tcp_info(socket_file_descriptor)?;
-    Ok(tcp_info.tcpi_rtt.into())
+    let rtt_us = tcp_info.tcpi_rtt as u64;
+    print_debug(&format!("DEBUG [determine_socket_rtt] rtt: {:?}", rtt_us));
+    Ok(rtt_us)
+}
+
+fn try_to_decode_rtt(buffer: &[u8], last_rtt_us: &mut Option<u64>) -> Option<u64> {
+    // Only search in a small portion of the whole buffer
+    let partial_buffer = if buffer.len() > 40 {
+        &buffer[buffer.len() - 40..]
+    } else {
+        buffer
+    };
+
+    if let Some(rtt_us) = try_to_extract_last_rtt(partial_buffer) {
+        *last_rtt_us = Some(rtt_us);
+        Some(rtt_us)
+    } else {
+        *last_rtt_us
+    }
+}
+
+fn try_to_extract_last_rtt(buffer: &[u8]) -> Option<u64> {
+    let marker_start = [0xAA, 0xAB, 0xAC];
+    let marker_end = [0xBA, 0xBB, 0xBC];
+
+    if buffer.len() < 10 {
+        return None
+    }
+
+    let mut possible_start_index: usize = buffer.len() - 10 - 1;
+    let mut possible_end_index = possible_start_index + 7;
+    loop {
+        if buffer[possible_start_index..].starts_with(&marker_start) &&
+            buffer[possible_end_index..].starts_with(&marker_end) {
+            let rtt = ((buffer[possible_start_index + 3] as u32) << 24)
+                    | ((buffer[possible_start_index + 4] as u32) << 16)
+                    | ((buffer[possible_start_index + 5] as u32) << 8)
+                    | ( buffer[possible_start_index + 6] as u32);
+            return Some(rtt as u64);
+        }
+        if possible_start_index > 0 {
+            possible_start_index -= 1;
+            possible_end_index = possible_start_index + 7;
+        } else {
+            return None;
+        }
+    }
 }
 
 fn determine_rnti_fair_share_type_by_path(path: &str) -> u8 {
@@ -351,4 +485,53 @@ fn determine_rnti_fair_share_type_by_path(path: &str) -> u8 {
     } else {
         0
     }
+}
+
+impl DownloadStreamState {
+    fn add_ngscope_dci(&mut self, ngscope_dci: NgScopeCellDci, rnti_option: Option<u16>) {
+        if let Some(rnti) = rnti_option {
+            self.dci_rnti_dl_bit += ngscope_dci.rnti_list
+                .iter()
+                .take(ngscope_dci.nof_rnti as usize)
+                .filter(|rnti_dci| rnti_dci.rnti == rnti)
+                .map(|rnti_dci| rnti_dci.dl_tbs_bit as u64)
+                .sum::<u64>();
+            self.dci_rnti_dl_prb_with_tbs += ngscope_dci.rnti_list
+                .iter()
+                .take(ngscope_dci.nof_rnti as usize)
+                .filter(|rnti_dci| rnti_dci.rnti == rnti)
+                .map(|rnti_dci| rnti_dci.dl_prb as u64)
+                .sum::<u64>();
+            self.dci_rnti_dl_prb_no_tbs += ngscope_dci.rnti_list
+                .iter()
+                .take(ngscope_dci.nof_rnti as usize)
+                .filter(|rnti_dci| rnti_dci.rnti == rnti)
+                .map(|rnti_dci| rnti_dci.dl_no_tbs_prb as u64)
+                .sum::<u64>();
+        }
+        self.dci_total_dl_bit += ngscope_dci.rnti_list
+            .iter()
+            .take(ngscope_dci.nof_rnti as usize)
+            .map(|rnti_dci| rnti_dci.dl_tbs_bit as u64)
+            .sum::<u64>();
+        self.dci_total_dl_prb_with_tbs += ngscope_dci.rnti_list
+            .iter()
+            .take(ngscope_dci.nof_rnti as usize)
+            .map(|rnti_dci| rnti_dci.dl_prb as u64)
+            .sum::<u64>();
+        self.dci_total_dl_prb_no_tbs += ngscope_dci.rnti_list
+            .iter()
+            .take(ngscope_dci.nof_rnti as usize)
+            .map(|rnti_dci| rnti_dci.dl_no_tbs_prb as u64)
+            .sum::<u64>();
+    }
+}
+
+fn determine_average_download_bytes(timedata: &HashMap<u64, TcpLogStats>) -> u64 {
+    timedata.iter().map(|(_, v)| v.received_bytes).sum::<u64>()
+}
+
+fn determine_average_rtt_us(timedata: &HashMap<u64, TcpLogStats>) -> u64 {
+    (timedata.iter().map(|(_, v)| v.rtt_us).sum::<u64>() as f64
+     / timedata.len() as f64) as u64
 }

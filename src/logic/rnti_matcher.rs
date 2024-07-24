@@ -304,7 +304,7 @@ fn handle_start_matching(
     *traffic_pattern_index = (*traffic_pattern_index + 1) % traffic_pattern_list.len();
 
     let pattern_total_ms = traffic_pattern.total_time_ms();
-    let start_timestamp_ms = chrono::Utc::now().timestamp_millis() as u64;
+    let start_timestamp_ms = chrono::Local::now().timestamp_millis() as u64;
     let finish_timestamp_ms = start_timestamp_ms
         + (MATCHING_TRAFFIC_PATTERN_TIME_OVERLAP_FACTOR * pattern_total_ms as f64) as u64;
     let traffic_pattern_features =
@@ -335,7 +335,7 @@ fn handle_collect_dci(
     mut traffic_collection: TrafficCollection,
 ) -> RntiMatcherState {
     // TODO: Check time -> proceed to ProcessDci
-    let chrono_now = chrono::Utc::now();
+    let chrono_now = chrono::Local::now();
     let now_ms = chrono_now.timestamp_millis() as u64;
     if now_ms >= traffic_collection.finish_timestamp_ms {
         return RntiMatcherState::MatchingProcessDci(Box::new(traffic_collection));
@@ -570,7 +570,7 @@ fn gen_handle_send_pattern(
         Some(msg) => {
             let sleep_us: u64;
 
-            let now_us = chrono::Utc::now().timestamp_micros() as u64;
+            let now_us = chrono::Local::now().timestamp_micros() as u64;
             if let Some(ref mut timestamp_us) = last_sent_timemstamp_us {
                 /* Determine time delta and adapt sleeping time */
                 let delta = now_us - *timestamp_us;
@@ -589,7 +589,7 @@ fn gen_handle_send_pattern(
             }
 
             thread::sleep(Duration::from_micros(sleep_us));
-            *last_sent_timemstamp_us = Some(chrono::Utc::now().timestamp_micros() as u64);
+            *last_sent_timemstamp_us = Some(chrono::Local::now().timestamp_micros() as u64);
 
             let mut payload = msg.payload.clone();
             if let Some(metric) = metric_option {

@@ -89,6 +89,14 @@ fn deploy_app(
         tx_metric,
         rx_download_config: tx_download_config.add_rx(),
     };
+    let downloader_args = DownloaderArgs {
+        app_args: app_args.clone(),
+        rx_app_state: tx_app_state.add_rx(),
+        rx_dci: tx_dci.add_rx(),
+        rx_rnti: tx_rnti.add_rx(),
+        tx_downloader_state: all_tx_states.downloader,
+        tx_download_config,
+    };
     let rntimatcher_args = RntiMatcherArgs {
         app_args: app_args.clone(),
         rx_app_state: tx_app_state.add_rx(),
@@ -109,12 +117,6 @@ fn deploy_app(
         rx_app_state: tx_app_state.add_rx(),
         tx_source_state: all_tx_states.source,
         tx_cell_info,
-    };
-    let downloader_args = DownloaderArgs {
-        app_args: app_args.clone(),
-        rx_app_state: tx_app_state.add_rx(),
-        tx_downloader_state: all_tx_states.downloader,
-        tx_download_config,
     };
 
     let tasks: Vec<JoinHandle<()>> = vec![

@@ -28,7 +28,7 @@ use crate::{
     util::{determine_process_id, print_info},
 };
 use bus::BusReader;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Local};
 use once_cell::sync::Lazy;
 
 const LOGGER_CAPACITY: usize = 1000;
@@ -77,7 +77,7 @@ struct RunArgs {
 #[derive(Debug)]
 pub struct LogFile {
     pub path: String,
-    pub last_write: DateTime<Utc>,
+    pub last_write: DateTime<Local>,
     pub file_handle: Option<File>,
 }
 
@@ -87,7 +87,7 @@ pub struct Logger {
     pub rx: Mutex<Receiver<LogMessage>>,
     pub tx_vec: Vec<Mutex<SyncSender<LogMessage>>>,
     pub stdout_file: Option<LogFile>,
-    pub run_timestamp: chrono::DateTime<Utc>,
+    pub run_timestamp: chrono::DateTime<Local>,
 }
 
 #[derive(Debug)]
@@ -149,12 +149,12 @@ fn run(run_args: &mut RunArgs) -> Result<()> {
             LoggerState::Running => handle_running()?,
             LoggerState::Stopped => break,
             LoggerState::InitStopLoggingSoon => {
-                stop_time_init_option = Some(chrono::Utc::now().timestamp_millis());
+                stop_time_init_option = Some(chrono::Local::now().timestamp_millis());
                 logger_state = LoggerState::StopLoggingSoon;
             }
             LoggerState::StopLoggingSoon => {
                 if let Some(stop_time_init) = stop_time_init_option {
-                    if chrono::Utc::now().timestamp_millis() - stop_time_init
+                    if chrono::Local::now().timestamp_millis() - stop_time_init
                         >= LOGGER_STOP_TIME_DELAY_MS
                     {
                         break;
@@ -253,7 +253,7 @@ pub fn get_logger() -> &'static mut Lazy<Logger> {
             .map(|_| Mutex::new(tx.clone()))
             .collect();
 
-        let run_timestamp = chrono::Utc::now();
+        let run_timestamp = chrono::Local::now();
         let run_timestamp_formatted = run_timestamp.format("%Y_%m_%d-%H_%M_%S").to_string();
         let base_dir = format!("{}run-{}/", DEFAULT_LOG_BASE_DIR, run_timestamp_formatted);
 
@@ -304,7 +304,7 @@ impl Logger {
                     let stdout_file_path = msg.file_path(&logger.base_dir, &logger.run_timestamp);
                     LogFile {
                         path: stdout_file_path,
-                        last_write: Utc::now(),
+                        last_write: Local::now(),
                         file_handle: None,
                     }
                 });
@@ -321,7 +321,7 @@ impl Logger {
                 })
             };
             msg.write_to_file(stdout_file_handle)?;
-            logger.stdout_file.as_mut().unwrap().last_write = chrono::Utc::now();
+            logger.stdout_file.as_mut().unwrap().last_write = chrono::Local::now();
             return Ok(());
         }
 
@@ -353,9 +353,9 @@ impl LogMessage {
         .to_string()
     }
 
-    pub fn file_path(&self, base_dir: &str, run_timestamp: &DateTime<Utc>) -> String {
+    pub fn file_path(&self, base_dir: &str, run_timestamp: &DateTime<Local>) -> String {
         let run_timestamp_formatted = run_timestamp.format("%Y_%m_%d-%H_%M_%S").to_string();
-        let now_formatted = Utc::now().format("%d-%H_%M_%S%.3f").to_string();
+        let now_formatted = Local::now().format("%d-%H_%M_%S%.3f").to_string();
 
         let message_type_file_path: String = match self {
             LogMessage::Info(_) => {

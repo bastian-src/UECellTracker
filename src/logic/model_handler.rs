@@ -195,7 +195,7 @@ fn run(run_args: &mut RunArgs) -> Result<()> {
     let scenario = app_args.scenario.unwrap();
 
     let is_log_metric: bool = model_args.model_log_metric;
-    let mut last_metric_timestamp_us: u64 = chrono::Utc::now().timestamp_micros() as u64;
+    let mut last_metric_timestamp_us: u64 = chrono::Local::now().timestamp_micros() as u64;
     let mut dci_buffer = DciRingBuffer::new();
     let mut last_rnti: Option<u16> = None;
     let mut last_cell_info: Option<CellInfo> = None;
@@ -250,7 +250,7 @@ fn run(run_args: &mut RunArgs) -> Result<()> {
 
         if let (Some(rnti), Some(cell_info)) = (last_rnti, last_cell_info.clone()) {
             let delta_last_metric_sent_us =
-                chrono::Utc::now().timestamp_micros() as u64 - last_metric_timestamp_us;
+                chrono::Local::now().timestamp_micros() as u64 - last_metric_timestamp_us;
             if delta_last_metric_sent_us > metric_sending_interval_us {
                 let mut run_params = RunParameters {
                     tx_metric,
@@ -326,7 +326,7 @@ fn handle_calculate_metric(
             let physical_rate_flag = metric_wrapper.result.physical_rate_coarse_flag;
             let physical_rate = metric_wrapper.result.physical_rate_bit_per_prb;
             let no_tbs_prb_ratio = metric_wrapper.result.no_tbs_prb_ratio;
-            let now_us = chrono::Utc::now().timestamp_micros() as u64;
+            let now_us = chrono::Local::now().timestamp_micros() as u64;
 
             tx_metric.broadcast(MessageMetric {
                 metric: MetricTypes::A(MetricA {
@@ -341,7 +341,7 @@ fn handle_calculate_metric(
                 }),
             });
         }
-        **last_metric_timestamp_us = chrono::Utc::now().timestamp_micros() as u64;
+        **last_metric_timestamp_us = chrono::Local::now().timestamp_micros() as u64;
         **metric_sending_interval_us = determine_sending_interval(model_args, last_rtt_us);
         **metric_smoothing_size_ms = determine_smoothing_size(model_args, last_rtt_us);
     } else {
