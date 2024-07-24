@@ -6,7 +6,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
-use casual_logger::{Level, Log};
 use lazy_static::lazy_static;
 use libc::{c_void, getsockopt, socklen_t, TCP_INFO};
 use std::mem;
@@ -187,27 +186,6 @@ pub fn print_debug(s: &str) {
     if is_debug() {
         let _ = log_info(s);
         // Log::print_debug(s)
-    }
-}
-
-pub trait LogExt {
-    fn print_info(s: &str);
-    fn print_debug(s: &str);
-}
-impl LogExt for Log {
-    /// Info level logging and add print to stdout.
-    fn print_info(s: &str) {
-        if Log::enabled(Level::Info) {
-            println!("{}", s);
-        }
-        Log::infoln(s);
-    }
-
-    fn print_debug(s: &str) {
-        if Log::enabled(Level::Debug) {
-            println!("{}", s);
-        }
-        Log::debugln(s);
     }
 }
 

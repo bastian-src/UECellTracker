@@ -9,7 +9,6 @@ edition = "2021"
 anyhow = "1.0.80"
 arrow = "52.1.0"
 bus = "2.4.1"
-casual_logger = "0.6.5"
 chrono = "0.4.38"
 clap = { version = "4.5.4", features = ["derive", "color", "env", "help"] }
 clap-serde = "0.5.1"
