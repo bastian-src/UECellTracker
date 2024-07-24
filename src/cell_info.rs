@@ -370,6 +370,7 @@ fn prb_from_cell_id(cell_id: u64) -> u16 {
         63 => 100,
         /* Telekom */
         6 => 50,
+        11 => 50, // LTE 800 DD (EARFCN 6500)
         7 => 100,
         8 => 100,
         _ => 100,

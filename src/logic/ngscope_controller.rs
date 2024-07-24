@@ -360,7 +360,7 @@ fn check_ngscope_message(
                             let timestamp_delta: i64 =
                                 cell_dci.time_stamp as i64 - *last_dci_timestamp_us as i64;
                             if timestamp_delta > 1000000 {
-                                let now_delta = chrono::Utc::now().timestamp_micros() as u64
+                                let now_delta = chrono::Local::now().timestamp_micros() as u64
                                     - cell_dci.time_stamp;
                                 print_debug(&format!(
                                     "DEBUG [ngcontrol.fetcher] 1s DCI gap:\n\
