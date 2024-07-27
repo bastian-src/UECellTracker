@@ -3,7 +3,7 @@ use crate::logger::log_metric;
 use crate::ngscope::types::{NgScopeCellDci, NgScopeRntiDci};
 use crate::parse::{Arguments, DynamicValue, FlattenedModelArgs, Scenario};
 use crate::util::{print_debug, print_info};
-use std::collections::HashSet;
+use std::collections::{HashSet, HashMap};
 use std::sync::mpsc::{SyncSender, TryRecvError};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -29,6 +29,7 @@ pub const STANDARD_NOF_PRB_SLOT_TO_SUBFRAME: u64 = 2;
 pub const STANDARD_BIT_PER_PRB: u64 = 500; /* Chosen from historical data */
 
 pub const RNTI_SHARE_TYPE_ALL: u8 = 0;
+pub const RNTI_SHARE_TYPE_DL_OCCURENCES: u8 = 1;
 // pub const RNTI_SHARE_TYPE_UNFAIR: u8 = 0; // Don't share idle PRBs
 // pub const RNTI_SHARE_TYPE_ACTIVE: u8 = 0; // Share idle PRBs among "active" RNTIs
 
@@ -367,7 +368,7 @@ fn calculate_capacity(
                                  c_p:      \t{:6?} bit/ms | {:3.3?} Mbit/s
                                  phy rate: \t{:6?} bit/PRB
                                  phy flag: \t{:?}
-                                 no_tbs %:  \t{:?}",
+                                 no_tbs %: \t{:?}",
         metric_wrapper
             .result
             .transport_fair_share_capacity_bit_per_ms,
@@ -407,10 +408,15 @@ fn calculate_pbe_cc_capacity(
     if nof_dci == 0 {
         return Err(anyhow!("Cannot calculate capacity with 0 DCI"));
     }
+
+    /*
+     * Determine parameters of the given DCIs
+     * */
     // Total number of PRBs in a subframe, that the cell can offer
     let p_cell: u64 =
         STANDARD_NOF_PRB_SLOT_TO_SUBFRAME * cell_info.cells[0].nof_prb as u64 * nof_dci;
 
+    // Total number of unique RNTIs
     let nof_rnti: u64 = dci_list
         .iter()
         .flat_map(|dci| {
@@ -423,17 +429,18 @@ fn calculate_pbe_cc_capacity(
         .collect::<HashSet<u16>>()
         .len() as u64;
 
-    /* TOOD: Evaluate rnti_share_type */
-    let nof_rnti_shared: u64 = if nof_rnti == 0 { 1 } else { nof_rnti };
-
+    // Number of allocated PRBs that contain TBS information
     let p_alloc: u64 = dci_list.iter().map(|dci| dci.total_dl_prb as u64).sum();
+    // Number of allocated PRBs that contain no TBS information
     let p_alloc_no_tbs: u64 = dci_list
         .iter()
         .map(|dci| dci.total_dl_no_tbs_prb as u64)
         .sum();
 
+    // Total decoded traffic in bit
     let tbs_alloc_bit: u64 = dci_list.iter().map(|dci| dci.total_dl_tbs_bit).sum();
 
+    // The DCIs of the target RNTI (our UE)
     let target_rnti_dci_list: Vec<&NgScopeRntiDci> = dci_list
         .iter()
         .flat_map(|dci| {
@@ -445,23 +452,31 @@ fn calculate_pbe_cc_capacity(
         })
         .collect::<Vec<&NgScopeRntiDci>>();
 
+    // The traffic of our RNTI in bit
     let tbs_alloc_rnti_bit: u64 = target_rnti_dci_list
         .iter()
         .map(|target_rnti_dci| target_rnti_dci.dl_tbs_bit as u64)
         .sum::<u64>();
 
+    // The number of allocated PRBs by our RNTI (with TBS)
     let p_alloc_rnti: u64 = target_rnti_dci_list
         .iter()
         .map(|target_rnti_dci| target_rnti_dci.dl_prb as u64)
         .sum::<u64>();
 
+    // The number of allocated PRBs by our RNTI (without TBS -> traffic in bits unknown)
     let p_alloc_no_tbs_rnti: u64 = target_rnti_dci_list
         .iter()
         .map(|target_rnti_dci| target_rnti_dci.dl_no_tbs_prb as u64)
         .sum::<u64>();
 
-    let mut r_w_coarse_flag: u8 = 0;
+    // Total number of allocated PRBs in the given DCIs
     let p_alloc_total = p_alloc + p_alloc_no_tbs;
+
+    // Flag to signialize that the bit per PRB rate does NOT belong to our RNTI and is a coarse
+    // estimation
+    let mut r_w_coarse_flag: u8 = 0;
+
     // [bit/PRB]
     let r_w: u64 = if p_alloc_rnti == 0 {
         r_w_coarse_flag = 1;
@@ -473,13 +488,60 @@ fn calculate_pbe_cc_capacity(
             STANDARD_BIT_PER_PRB
         }
     } else {
+        /* Use the bit per PRB of our RNTI */
         tbs_alloc_rnti_bit / p_alloc_rnti
     };
+
+    /* Number of unused PRBs in the given DCI-timeframe */
     let p_idle: u64 = match p_cell.checked_sub(p_alloc_total) {
         Some(result_p_idle) => result_p_idle,
         None => return Err(anyhow!("error in calculate PBE capacity: p_idle < 0! (probably more p_alloc_no_tbs than p_cell)")),
     };
 
+    /*
+     * Determine with how many RNTIs the idle PRBs shall be shared (RNTI fair share type)
+     * */
+    let mut used_rnti_share_type = *rnti_share_type;
+    let nof_rnti_shared: u64 = match *rnti_share_type {
+        RNTI_SHARE_TYPE_DL_OCCURENCES => {
+            let nof_occurenes_threshould = nof_dci / 10;
+            let rnti_counts: HashMap<u16, u64> = dci_list.iter()
+                .flat_map(|dci| {
+                    dci.rnti_list
+                        .iter()
+                        .take(dci.nof_rnti as usize)
+                        .filter(|rnti_dci| rnti_dci.dl_prb > 0)
+                        .map(|rnti_dci| rnti_dci.rnti)
+                })
+                .fold(HashMap::new(), |mut acc, rnti| {
+                    *acc.entry(rnti).or_insert(0) += 1;
+                    acc
+                });
+            let nof_all_rnti = rnti_counts.len();
+            let mut nof_filtered = rnti_counts.into_iter()
+                .filter(|&(_, count)| count >= nof_occurenes_threshould)
+                .collect::<Vec<(u16, u64)>>()
+                .len() as u64;
+            if nof_filtered == 0 {
+                nof_filtered = 1;
+            }
+            print_debug(&format!("DEBUG [model] RNTI Fair Share Type 1: {} -> {} | {}", nof_all_rnti, nof_filtered, nof_occurenes_threshould));
+            nof_filtered
+        }
+        // Default: RNTI_SHARE_TYPE_ALL
+        _ => {
+            used_rnti_share_type = RNTI_SHARE_TYPE_ALL;
+            if nof_rnti <= 1 {
+                1
+            } else {
+                nof_rnti
+            }
+        }
+    };
+
+    /*
+     * Determine the fair share badnwidth c_p (physical layer) and c_t (transport layer)
+     * */
     let p_alloc_rnti_suggested: u64 =
         p_alloc_rnti + ((p_idle + nof_rnti_shared - 1) / nof_rnti_shared);
     let c_p: u64 =
@@ -488,7 +550,7 @@ fn calculate_pbe_cc_capacity(
 
     let mut no_tbs_prb_ratio = 0.0;
     if p_alloc_no_tbs > 0 {
-        no_tbs_prb_ratio = p_alloc_total as f64 / p_alloc_no_tbs as f64;
+        no_tbs_prb_ratio =  p_alloc_no_tbs as f64 / p_alloc_total as f64;
     }
 
     print_debug(&format!(
@@ -533,7 +595,7 @@ fn calculate_pbe_cc_capacity(
             nof_dci,
             p_cell,
             nof_rnti_shared,
-            rnti_share_type: *rnti_share_type,
+            rnti_share_type: used_rnti_share_type,
             p_alloc,
             p_alloc_no_tbs,
             tbs_alloc_bit,
