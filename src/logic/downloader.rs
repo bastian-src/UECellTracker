@@ -24,13 +24,14 @@ use crate::{
     util::{determine_process_id, init_heap_buffer, print_debug, print_info, sockopt_get_tcp_info},
 };
 
-pub const INITIAL_SLEEP_TIME_MS: u64 = 20000;
+pub const INITIAL_SLEEP_TIME_MS: u64 = 20_000;
 pub const READILY_WAITING_SLEEP_TIME_MS: u64 = 500;
 pub const DOWNLOADING_IDLE_SLEEP_TIME_MS: u64 = 20;
-pub const RECOVERY_SLEEP_TIME_MS: u64 = 2000;
-pub const BETWEEN_DOWNLOADS_SLEEP_TIME_MS: u64 = 1000;
+pub const RECOVERY_SLEEP_TIME_MS: u64 = 2_000;
+pub const BETWEEN_DOWNLOADS_SLEEP_TIME_MS: u64 = 1_000;
+pub const RESTART_TIMEOUT_US: u64 = 2_000_000;
 
-pub const TCP_STREAM_READ_BUFFER_SIZE: usize = 100000;
+pub const TCP_STREAM_READ_BUFFER_SIZE: usize = 100_000;
 
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct DownloadStreamState {
@@ -378,6 +379,13 @@ fn handle_downloading(params: DownloadingParameters) -> DownloaderState {
             }
         }
         Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+            // If no packets have arrived in a certain time, restart the download
+            if timedata.is_empty() {
+                let now_us = chrono::Local::now().timestamp_micros() as u64;
+                if (now_us - *start_timestamp_us) > RESTART_TIMEOUT_US {
+                    return DownloaderState::ErrorStartingDownload("Downloading Timeout!".to_string())
+                }
+            }
             DownloaderState::Downloading
         }
         Err(ref e) if e.kind() == io::ErrorKind::ConnectionReset => {

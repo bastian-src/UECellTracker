@@ -43,7 +43,7 @@ pub const BASIC_FILTER_MIN_TOTAL_UL_FACTOR: f64 = 0.005;
 pub const BASIC_FILTER_MAX_UL_PER_DCI: u64 = 5_000_000;
 pub const BASIC_FILTER_MIN_OCCURENCES_FACTOR: f64 = 0.05;
 
-pub const RNTI_RING_BUFFER_SIZE: usize = 5;
+pub const RNTI_RING_BUFFER_SIZE: usize = 10;
 
 pub const METRIC_HEADER_LENGTH: usize = 5;
 pub const METRIC_INITIAL_INDEX_START: usize = 0;
