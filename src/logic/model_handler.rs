@@ -30,6 +30,7 @@ pub const STANDARD_BIT_PER_PRB: u64 = 500; /* Chosen from historical data */
 
 pub const RNTI_SHARE_TYPE_ALL: u8 = 0;
 pub const RNTI_SHARE_TYPE_DL_OCCURENCES: u8 = 1;
+pub const RNTI_SHARE_TYPE_GREEDY: u8 = 2;
 // pub const RNTI_SHARE_TYPE_UNFAIR: u8 = 0; // Don't share idle PRBs
 // pub const RNTI_SHARE_TYPE_ACTIVE: u8 = 0; // Share idle PRBs among "active" RNTIs
 
@@ -89,6 +90,7 @@ pub struct MetricBasis {
     pub nof_dci: u64,
     pub p_cell: u64,
     pub nof_rnti_shared: u64,
+    pub nof_rnti_in_dci: u64,
     pub rnti_share_type: u8,
     pub p_alloc: u64,
     pub p_alloc_no_tbs: u64,
@@ -528,6 +530,9 @@ fn calculate_pbe_cc_capacity(
             print_debug(&format!("DEBUG [model] RNTI Fair Share Type 1: {} -> {} | {}", nof_all_rnti, nof_filtered, nof_occurenes_threshould));
             nof_filtered
         }
+        RNTI_SHARE_TYPE_GREEDY => {
+            1
+        }
         // Default: RNTI_SHARE_TYPE_ALL
         _ => {
             used_rnti_share_type = RNTI_SHARE_TYPE_ALL;
@@ -595,6 +600,7 @@ fn calculate_pbe_cc_capacity(
             nof_dci,
             p_cell,
             nof_rnti_shared,
+            nof_rnti_in_dci: nof_rnti,
             rnti_share_type: used_rnti_share_type,
             p_alloc,
             p_alloc_no_tbs,
