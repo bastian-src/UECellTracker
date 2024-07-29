@@ -11,7 +11,7 @@ use bus::BusReader;
 use crate::cell_info::CellInfo;
 use crate::logic::rnti_matcher::TrafficCollection;
 use crate::ngscope::config::NgScopeConfig;
-use crate::ngscope::types::NgScopeCellDci;
+use crate::ngscope::types::{NgScopeCellDci, NgScopeCellConfig};
 
 use self::downloader::{DownloadConfig, DownloadFinishParameters};
 
@@ -269,8 +269,9 @@ impl WorkerState for DownloaderState {
 
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
-pub struct MessageDci {
-    ngscope_dci: NgScopeCellDci,
+pub enum MessageDci {
+    CellDci(Box<NgScopeCellDci>),
+    CellConfig(Box<NgScopeCellConfig>),
 }
 
 #[allow(dead_code)]

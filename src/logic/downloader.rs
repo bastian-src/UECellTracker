@@ -269,15 +269,17 @@ fn unpack_all_dci_messages(
 ) -> Result<()> {
     while let Ok(dci) = rx_dci.try_recv() {
         if let DownloaderState::Downloading | DownloaderState::PostDownload = downloader_state {
-            if dci.ngscope_dci.time_stamp >= download_stream_state.start_timestamp_us {
-                if let Some(finish_timestamp_us) = download_stream_state.finish_timestamp_us {
-                    if dci.ngscope_dci.time_stamp > finish_timestamp_us {
-                        continue;
-                    } else {
-                        print_debug("DEBUG [download] Collecting DCI in PostDownload state!!!");
+            if let MessageDci::CellDci(ngscope_dci) = dci {
+                if ngscope_dci.time_stamp >= download_stream_state.start_timestamp_us {
+                    if let Some(finish_timestamp_us) = download_stream_state.finish_timestamp_us {
+                        if ngscope_dci.time_stamp > finish_timestamp_us {
+                            continue;
+                        } else {
+                            print_debug("DEBUG [download] Collecting DCI in PostDownload state!!!");
+                        }
                     }
+                    download_stream_state.add_ngscope_dci(*ngscope_dci, rnti_option);
                 }
-                download_stream_state.add_ngscope_dci(dci.ngscope_dci, rnti_option);
             }
         }
     }

@@ -61,16 +61,6 @@ pub fn ngscope_recv_single_message_type(socket: &UdpSocket) -> Result<(MessageTy
     }
 }
 
-pub fn ngscope_recv_single_message_type_non_blocking(
-    socket: &UdpSocket,
-) -> Result<(MessageType, Vec<u8>)> {
-    let mut buf = [0u8; types::NGSCOPE_REMOTE_BUFFER_SIZE];
-    match socket.recv_from(&mut buf) {
-        Ok((nof_recv, _)) => types::ngscope_extract_packet(&buf[..nof_recv]),
-        Err(err) => Err(err.into()),
-    }
-}
-
 pub fn ngscope_recv_single_message(socket: &UdpSocket) -> Result<Message> {
     let mut buf = [0u8; types::NGSCOPE_REMOTE_BUFFER_SIZE];
     let (nof_recv, _) = socket.recv_from(&mut buf)?;
@@ -114,16 +104,17 @@ pub fn ngscope_validate_server_send_initial(socket: &UdpSocket, server_addr: &st
     Ok(())
 }
 
-pub fn ngscope_validate_server_check(socket: &UdpSocket) -> Result<Option<()>> {
-    let msg_type = ngscope_recv_single_message_type_non_blocking(socket);
-    match msg_type {
-        Ok((msg_type, _)) => match msg_type {
-            MessageType::Start | MessageType::Dci | MessageType::CellDci | MessageType::Config => {
-                Ok(Some(()))
-            }
-            MessageType::Exit => Err(anyhow!(
+pub fn ngscope_validate_server_check(socket: &UdpSocket) -> Result<Option<Message>> {
+    let msg = ngscope_recv_single_message(socket);
+    match msg {
+        Ok(msg) => match msg {
+            Message::Exit => Err(anyhow!(
                 "Received Exit from ngscope server during validation"
             )),
+            Message::Start |
+            Message::Dci(_) |
+            Message::CellDci(_) |
+            Message::Config(_) => { Ok(Some(msg)) }
         },
         Err(_) => Ok(None),
     }
