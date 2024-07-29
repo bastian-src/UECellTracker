@@ -72,6 +72,18 @@ impl DciRingBuffer {
         let delta_index = self.dci_next - slice_size;
         &self.dci_array[delta_index..self.dci_next]
     }
+
+    fn pop(&mut self, wanted_slice_size: usize) -> &[NgScopeCellDci] {
+        if wanted_slice_size == 0 || self.dci_next == 0 {
+            return &[];
+        }
+
+        let slice_size = usize::min(wanted_slice_size, self.dci_next);
+        let delta_index = self.dci_next - slice_size;
+        let old_dci_next = self.dci_next;
+        self.dci_next = 0;
+        &self.dci_array[delta_index..old_dci_next]
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
@@ -132,7 +144,7 @@ struct RunArgs {
 
 struct RunParameters<'a> {
     tx_metric: &'a mut Bus<MessageMetric>,
-    dci_buffer: &'a DciRingBuffer,
+    dci_buffer: &'a mut DciRingBuffer,
     rnti: u16,
     cell_info: &'a CellInfo,
     is_log_metric: &'a bool,
@@ -213,13 +225,7 @@ fn run(run_args: &mut RunArgs) -> Result<()> {
         if check_not_stopped(rx_app_state).is_err() {
             break;
         }
-        match rx_dci.try_recv() {
-            Ok(dci) => {
-                dci_buffer.push(dci.ngscope_dci);
-            }
-            Err(TryRecvError::Empty) => {}
-            Err(TryRecvError::Disconnected) => break,
-        };
+        unpack_all_dci_messages(rx_dci, &mut dci_buffer)?;
         match rx_cell_info.try_recv() {
             Ok(cell_info) => last_cell_info = Some(cell_info.cell_info.clone()),
             Err(TryRecvError::Empty) => {}
@@ -257,7 +263,7 @@ fn run(run_args: &mut RunArgs) -> Result<()> {
             if delta_last_metric_sent_us > metric_sending_interval_us {
                 let mut run_params = RunParameters {
                     tx_metric,
-                    dci_buffer: &dci_buffer,
+                    dci_buffer: &mut dci_buffer,
                     rnti,
                     cell_info: &cell_info,
                     is_log_metric: &is_log_metric,
@@ -289,6 +295,23 @@ fn is_idle_scenario(scenario: Scenario) -> bool {
 
 fn finish(run_args: RunArgs) {
     let _ = send_final_state(&run_args.tx_model_state);
+}
+
+fn unpack_all_dci_messages(
+    rx_dci: &mut BusReader<MessageDci>,
+    dci_buffer: &mut DciRingBuffer,
+) -> Result<()> {
+
+    loop {
+        match rx_dci.try_recv() {
+            Ok(dci) => {
+                    dci_buffer.push(dci.ngscope_dci)
+            },
+            Err(TryRecvError::Empty) => break,
+            Err(TryRecvError::Disconnected) =>  return Err(anyhow!("[model] error: rx_dci disconnected"))
+        }
+    }
+    Ok(())
 }
 
 fn handle_calculate_metric(
