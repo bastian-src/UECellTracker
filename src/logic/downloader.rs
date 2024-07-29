@@ -30,6 +30,7 @@ pub const DOWNLOADING_IDLE_SLEEP_TIME_MS: u64 = 20;
 pub const RECOVERY_SLEEP_TIME_MS: u64 = 2_000;
 pub const BETWEEN_DOWNLOADS_SLEEP_TIME_MS: u64 = 1_000;
 pub const RESTART_TIMEOUT_US: u64 = 2_000_000;
+pub const POST_DOWNLOAD_TIME_US: u64 = 2_000_000;
 
 pub const TCP_STREAM_READ_BUFFER_SIZE: usize = 100_000;
 
@@ -40,6 +41,7 @@ pub struct DownloadStreamState {
     pub rnti_share_type: u8,
     pub last_rtt_us: Option<u64>,
     pub start_timestamp_us: u64,
+    pub finish_timestamp_us: Option<u64>,
     pub timedata: HashMap<u64, TcpLogStats>,
     pub dci_total_dl_bit: u64,
     pub dci_rnti_dl_bit: u64,
@@ -229,6 +231,9 @@ fn run(run_args: &mut RunArgs) -> Result<()> {
                     Box::new(DownloaderState::StartDownload),
                 )
             }
+            DownloaderState::PostDownload => {
+                handle_post_download(&mut current_download)
+            }
         }
     }
 
@@ -262,19 +267,25 @@ fn unpack_all_dci_messages(
     downloader_state: &DownloaderState,
     rnti_option: Option<u16>
 ) -> Result<()> {
-
-    loop {
-        match rx_dci.try_recv() {
-            Ok(dci) => {
-                if DownloaderState::Downloading == *downloader_state &&
-                   dci.ngscope_dci.time_stamp >= download_stream_state.start_timestamp_us {
-                    download_stream_state.add_ngscope_dci(dci.ngscope_dci, rnti_option);
+    while let Ok(dci) = rx_dci.try_recv() {
+        if let DownloaderState::Downloading | DownloaderState::PostDownload = downloader_state {
+            if dci.ngscope_dci.time_stamp >= download_stream_state.start_timestamp_us {
+                if let Some(finish_timestamp_us) = download_stream_state.finish_timestamp_us {
+                    if dci.ngscope_dci.time_stamp > finish_timestamp_us {
+                        continue;
+                    } else {
+                        print_debug("DEBUG [download] Collecting DCI in PostDownload state!!!");
+                    }
                 }
+                download_stream_state.add_ngscope_dci(dci.ngscope_dci, rnti_option);
             }
-            Err(TryRecvError::Empty) => break,
-            Err(TryRecvError::Disconnected) =>  return Err(anyhow!("[download] error: rx_dci disconnected"))
-        };
+        }
     }
+
+    if let Err(TryRecvError::Disconnected) = rx_dci.try_recv() {
+        return Err(anyhow!("[download] error: rx_dci disconnected"));
+    }
+
     Ok(())
 }
 
@@ -326,6 +337,7 @@ fn handle_downloading(params: DownloadingParameters) -> DownloaderState {
                 rnti_share_type,
                 last_rtt_us,
                 start_timestamp_us,
+                finish_timestamp_us,
                 timedata,
                 dci_total_dl_bit,
                 dci_rnti_dl_bit,
@@ -340,26 +352,11 @@ fn handle_downloading(params: DownloadingParameters) -> DownloaderState {
         Ok(chunk_size) => {
             if chunk_size == 0 {
                 // End of stream
-                let download_finish_timestamp_us = chrono::Local::now().timestamp_micros() as u64;
-                let total_download_bytes = determine_average_download_bytes(timedata);
-                let average_rtt_us = determine_average_rtt_us(timedata);
-                DownloaderState::FinishDownload(DownloadFinishParameters {
-                    base_addr: base_addr.to_string(),
-                    path: path.to_string(),
-                    start_timestamp_us: *start_timestamp_us,
-                    finish_timestamp_us: download_finish_timestamp_us,
-                    average_rtt_us,
-                    total_download_bytes,
-                    dci_total_dl_bit: *dci_total_dl_bit,
-                    dci_total_dl_prb_with_tbs: *dci_total_dl_prb_with_tbs,
-                    dci_total_dl_prb_no_tbs: *dci_total_dl_prb_no_tbs,
-                    dci_rnti_dl_bit: *dci_rnti_dl_bit,
-                    dci_rnti_dl_prb_with_tbs: *dci_rnti_dl_prb_with_tbs,
-                    dci_rnti_dl_prb_no_tbs: *dci_rnti_dl_prb_no_tbs,
-                })
+                *finish_timestamp_us = Some(chrono::Local::now().timestamp_micros() as u64);
+                DownloaderState::PostDownload
+
             } else {
                 let now_us = chrono::Local::now().timestamp_micros() as u64;
-
                 if let Some(rtt_us) = try_to_decode_rtt(&stream_buffer[0..chunk_size], last_rtt_us) {
                     timedata.entry(now_us).or_insert(TcpLogStats {
                         received_bytes: chunk_size as u64,
@@ -412,6 +409,47 @@ fn handle_downloading(params: DownloadingParameters) -> DownloaderState {
             DownloaderState::ErrorStartingDownload(format!("Error during download: {:?}", e))
         }
     }
+}
+
+fn handle_post_download(download_stream_state: &mut DownloadStreamState) -> DownloaderState {
+    let DownloadStreamState {
+        base_addr,
+        path,
+        start_timestamp_us,
+        finish_timestamp_us,
+        timedata,
+        dci_total_dl_bit,
+        dci_rnti_dl_bit,
+        dci_total_dl_prb_with_tbs,
+        dci_total_dl_prb_no_tbs,
+        dci_rnti_dl_prb_with_tbs,
+        dci_rnti_dl_prb_no_tbs,
+        ..
+    } = download_stream_state;
+
+    let now_us = chrono::Local::now().timestamp_micros() as u64;
+    if now_us < (finish_timestamp_us.unwrap() + POST_DOWNLOAD_TIME_US) {
+        // Stay in PostDownload and keep collecting DCI
+        DownloaderState::PostDownload
+    } else {
+        let total_download_bytes = determine_average_download_bytes(timedata);
+        let average_rtt_us = determine_average_rtt_us(timedata);
+        DownloaderState::FinishDownload(DownloadFinishParameters {
+            base_addr: base_addr.to_string(),
+            path: path.to_string(),
+            start_timestamp_us: *start_timestamp_us,
+            finish_timestamp_us: finish_timestamp_us.unwrap(),
+            average_rtt_us,
+            total_download_bytes,
+            dci_total_dl_bit: *dci_total_dl_bit,
+            dci_total_dl_prb_with_tbs: *dci_total_dl_prb_with_tbs,
+            dci_total_dl_prb_no_tbs: *dci_total_dl_prb_no_tbs,
+            dci_rnti_dl_bit: *dci_rnti_dl_bit,
+            dci_rnti_dl_prb_with_tbs: *dci_rnti_dl_prb_with_tbs,
+            dci_rnti_dl_prb_no_tbs: *dci_rnti_dl_prb_no_tbs,
+        })
+    }
+
 }
 
 fn create_download_stream(base_addr: &str, path: &str) -> Result<TcpStream> {

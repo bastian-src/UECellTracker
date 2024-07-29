@@ -244,6 +244,7 @@ pub enum DownloaderState {
     StartDownload,
     ErrorStartingDownload(String),
     Downloading,
+    PostDownload,
     FinishDownload(DownloadFinishParameters),
 }
 
