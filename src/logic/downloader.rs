@@ -488,7 +488,9 @@ fn try_to_extract_last_rtt(buffer: &[u8]) -> Option<u64> {
 }
 
 fn determine_rnti_fair_share_type_by_path(path: &str) -> u8 {
-    if path.contains("fair1") {
+    if path.contains("fair2") {
+        2
+    } else if path.contains("fair1") {
         1
     } else {
         0
