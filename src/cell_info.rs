@@ -39,7 +39,6 @@ pub struct SingleCell {
     pub cell_id: u64,
     pub cell_type: CellularType,
     /// Number of PRB per slot
-    pub nof_prb: u16,
     pub frequency: u64,
     pub rssi: f64,
     pub rsrp: f64,
@@ -313,7 +312,6 @@ impl CellInfo {
         let mut single_cell: SingleCell = SingleCell {
             cell_id: 0,
             cell_type: CellularType::LTE,
-            nof_prb: 100,
             frequency: 0,
             rssi: 0.0,
             rsrp: 0.0,
@@ -329,7 +327,6 @@ impl CellInfo {
         single_cell.rssi = cgi_response_extract_rssi(response_value)?;
         single_cell.rsrq = cgi_response_extract_rsrp(response_value)?;
         single_cell.rsrp = cgi_response_extract_rsrq(response_value)?;
-        single_cell.nof_prb = prb_from_cell_id(single_cell.cell_id);
         // TODO: Evaluate: Add estimated bandwidth?
         Ok(CellInfo {
             cells: [single_cell].to_vec(),
@@ -343,7 +340,6 @@ impl CellInfo {
                 cell_id: cell.safe_id(),
                 cell_type: CellularType::from_str(&cell.r#type)?,
                 frequency: 0,
-                nof_prb: 100,
                 rssi: cell.rssi,
                 rsrp: cell.rsrp,
                 rsrq: cell.rsrq,
@@ -351,29 +347,10 @@ impl CellInfo {
                 ul_est: cell.estimatedUpBandwidth,
             };
             single_cell.frequency = arfcn_to_frequency(cell.arfcn, &single_cell.cell_type)?;
-            single_cell.nof_prb = prb_from_cell_id(single_cell.cell_id);
             cell_info.cells.push(single_cell);
         }
 
         Ok(cell_info)
-    }
-}
-
-// Quick fix for setting the nof PRB.
-fn prb_from_cell_id(cell_id: u64) -> u16 {
-    match cell_id {
-        /* O2 */
-        21 => 50,
-        41 => 100,
-        51 => 100,
-        61 => 100,
-        63 => 100,
-        /* Telekom */
-        6 => 50,
-        11 => 50, // LTE 800 DD (EARFCN 6500)
-        7 => 100,
-        8 => 100,
-        _ => 100,
     }
 }
 

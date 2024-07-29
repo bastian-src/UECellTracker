@@ -1,4 +1,3 @@
-use crate::cell_info::CellInfo;
 use crate::logger::log_metric;
 use crate::ngscope::types::{NgScopeCellDci, NgScopeRntiDci};
 use crate::parse::{Arguments, DynamicValue, FlattenedModelArgs, Scenario};
@@ -14,7 +13,7 @@ use serde_derive::{Deserialize, Serialize};
 
 use super::{MessageDownloadConfig, MetricA, MetricTypes};
 use crate::logic::{
-    check_not_stopped, wait_until_running, MainState, MessageCellInfo, MessageDci, MessageMetric,
+    check_not_stopped, wait_until_running, MainState, MessageDci, MessageMetric,
     MessageRnti, ModelState, DEFAULT_WORKER_SLEEP_US,
 };
 use crate::util::determine_process_id;
@@ -124,7 +123,6 @@ pub struct ModelHandlerArgs {
     pub app_args: Arguments,
     pub rx_app_state: BusReader<MainState>,
     pub tx_model_state: SyncSender<ModelState>,
-    pub rx_cell_info: BusReader<MessageCellInfo>,
     pub rx_dci: BusReader<MessageDci>,
     pub rx_rnti: BusReader<MessageRnti>,
     pub rx_download_config: BusReader<MessageDownloadConfig>,
@@ -135,7 +133,6 @@ struct RunArgs {
     pub app_args: Arguments,
     pub rx_app_state: BusReader<MainState>,
     pub tx_model_state: SyncSender<ModelState>,
-    pub rx_cell_info: BusReader<MessageCellInfo>,
     pub rx_dci: BusReader<MessageDci>,
     pub rx_rnti: BusReader<MessageRnti>,
     pub rx_download_config: BusReader<MessageDownloadConfig>,
@@ -146,7 +143,7 @@ struct RunParameters<'a> {
     tx_metric: &'a mut Bus<MessageMetric>,
     dci_buffer: &'a mut DciRingBuffer,
     rnti: u16,
-    cell_info: &'a CellInfo,
+    cell_capacity_prb_per_slot: u16,
     is_log_metric: &'a bool,
 }
 
@@ -164,7 +161,6 @@ pub fn deploy_model_handler(args: ModelHandlerArgs) -> Result<JoinHandle<()>> {
         app_args: args.app_args,
         rx_app_state: args.rx_app_state,
         tx_model_state: args.tx_model_state,
-        rx_cell_info: args.rx_cell_info,
         rx_dci: args.rx_dci,
         rx_rnti: args.rx_rnti,
         rx_download_config: args.rx_download_config,
@@ -194,7 +190,6 @@ fn run(run_args: &mut RunArgs) -> Result<()> {
     let app_args = &run_args.app_args;
     let rx_app_state: &mut BusReader<MainState> = &mut run_args.rx_app_state;
     let tx_model_state: &mut SyncSender<ModelState> = &mut run_args.tx_model_state;
-    let rx_cell_info: &mut BusReader<MessageCellInfo> = &mut run_args.rx_cell_info;
     let rx_dci: &mut BusReader<MessageDci> = &mut run_args.rx_dci;
     let rx_rnti: &mut BusReader<MessageRnti> = &mut run_args.rx_rnti;
     let rx_download_config: &mut BusReader<MessageDownloadConfig> =
@@ -213,7 +208,7 @@ fn run(run_args: &mut RunArgs) -> Result<()> {
     let mut last_metric_timestamp_us: u64 = chrono::Local::now().timestamp_micros() as u64;
     let mut dci_buffer = DciRingBuffer::new();
     let mut last_rnti: Option<u16> = None;
-    let mut last_cell_info: Option<CellInfo> = None;
+    let mut last_cell_capacity: Option<u16> = None;
     let mut last_rnti_share_type: u8 = RNTI_SHARE_TYPE_ALL;
     let mut last_rtt_us: Option<u64> = Some(40000);
     let mut metric_sending_interval_us: u64 = determine_sending_interval(&model_args, &last_rtt_us);
@@ -225,12 +220,7 @@ fn run(run_args: &mut RunArgs) -> Result<()> {
         if check_not_stopped(rx_app_state).is_err() {
             break;
         }
-        unpack_all_dci_messages(rx_dci, &mut dci_buffer)?;
-        match rx_cell_info.try_recv() {
-            Ok(cell_info) => last_cell_info = Some(cell_info.cell_info.clone()),
-            Err(TryRecvError::Empty) => {}
-            Err(TryRecvError::Disconnected) => break,
-        };
+        unpack_all_dci_messages(rx_dci, &mut dci_buffer, &mut last_cell_capacity)?;
         match rx_rnti.try_recv() {
             Ok(rnti_msg) => {
                 if let Some(rnti) = rnti_msg.cell_rnti.values().copied().next() {
@@ -257,7 +247,7 @@ fn run(run_args: &mut RunArgs) -> Result<()> {
         }
         /* </precheck> */
 
-        if let (Some(rnti), Some(cell_info)) = (last_rnti, last_cell_info.clone()) {
+        if let (Some(rnti), Some(cell_capacity_prb_per_slot)) = (last_rnti, last_cell_capacity) {
             let delta_last_metric_sent_us =
                 chrono::Local::now().timestamp_micros() as u64 - last_metric_timestamp_us;
             if delta_last_metric_sent_us > metric_sending_interval_us {
@@ -265,7 +255,7 @@ fn run(run_args: &mut RunArgs) -> Result<()> {
                     tx_metric,
                     dci_buffer: &mut dci_buffer,
                     rnti,
-                    cell_info: &cell_info,
+                    cell_capacity_prb_per_slot,
                     is_log_metric: &is_log_metric,
                 };
 
@@ -300,12 +290,22 @@ fn finish(run_args: RunArgs) {
 fn unpack_all_dci_messages(
     rx_dci: &mut BusReader<MessageDci>,
     dci_buffer: &mut DciRingBuffer,
+    last_cell_capacity: &mut Option<u16>,
 ) -> Result<()> {
 
     loop {
         match rx_dci.try_recv() {
             Ok(dci) => {
-                    dci_buffer.push(dci.ngscope_dci)
+                    match dci {
+                        MessageDci::CellDci(ngscope_dci) => {
+                            dci_buffer.push(*ngscope_dci)
+                        }
+                        MessageDci::CellConfig(ngscope_cell_config) => {
+                            if ngscope_cell_config.nof_cell == 1 {
+                                *last_cell_capacity = Some(ngscope_cell_config.cell_prb[0])
+                            }
+                        }
+                    }
             },
             Err(TryRecvError::Empty) => break,
             Err(TryRecvError::Disconnected) =>  return Err(anyhow!("[model] error: rx_dci disconnected"))
@@ -323,7 +323,7 @@ fn handle_calculate_metric(
         tx_metric,
         dci_buffer,
         rnti,
-        cell_info,
+        cell_capacity_prb_per_slot,
         is_log_metric,
     } = run_params;
 
@@ -341,7 +341,7 @@ fn handle_calculate_metric(
     if !buffer_slice.is_empty() {
         if let Ok(metric_wrapper) = calculate_capacity(
             *rnti,
-            cell_info,
+            *cell_capacity_prb_per_slot,
             buffer_slice,
             is_log_metric,
             rnti_share_type,
@@ -377,13 +377,13 @@ fn handle_calculate_metric(
 
 fn calculate_capacity(
     target_rnti: u16,
-    cell_info: &CellInfo,
+    cell_capacity_prb_per_slot: u16,
     dci_list: &[NgScopeCellDci],
     is_log_metric: &bool,
     rnti_share_type: &u8,
 ) -> Result<LogMetric> {
     let metric_wrapper =
-        calculate_pbe_cc_capacity(target_rnti, cell_info, dci_list, rnti_share_type)?;
+        calculate_pbe_cc_capacity(target_rnti, cell_capacity_prb_per_slot, dci_list, rnti_share_type)?;
     if *is_log_metric {
         let _ = log_metric(metric_wrapper.clone());
     }
@@ -425,7 +425,7 @@ fn calculate_capacity(
  * */
 fn calculate_pbe_cc_capacity(
     target_rnti: u16,
-    cell_info: &CellInfo,
+    cell_capacity_prb_per_slot: u16,
     dci_list: &[NgScopeCellDci],
     rnti_share_type: &u8,
 ) -> Result<LogMetric> {
@@ -439,7 +439,7 @@ fn calculate_pbe_cc_capacity(
      * */
     // Total number of PRBs in a subframe, that the cell can offer
     let p_cell: u64 =
-        STANDARD_NOF_PRB_SLOT_TO_SUBFRAME * cell_info.cells[0].nof_prb as u64 * nof_dci;
+        STANDARD_NOF_PRB_SLOT_TO_SUBFRAME * cell_capacity_prb_per_slot as u64 * nof_dci;
 
     // Total number of unique RNTIs
     let nof_rnti: u64 = dci_list
@@ -667,10 +667,7 @@ fn determine_smoothing_size(model_args: &FlattenedModelArgs, last_rtt_us: &Optio
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        cell_info::SingleCell,
-        ngscope::types::{NgScopeRntiDci, NGSCOPE_MAX_NOF_RNTI},
-    };
+    use crate:: ngscope::types::{NgScopeRntiDci, NGSCOPE_MAX_NOF_RNTI};
 
     fn dummy_rnti_dci(nof_rnti: u8) -> [NgScopeRntiDci; NGSCOPE_MAX_NOF_RNTI] {
         let mut rnti_list = [NgScopeRntiDci::default(); NGSCOPE_MAX_NOF_RNTI];
@@ -709,15 +706,10 @@ mod tests {
     #[test]
     fn test_capacity() -> Result<()> {
         let dummy_rnti: u16 = 123;
-        let dummy_cell_info = CellInfo {
-            cells: vec![SingleCell {
-                nof_prb: 100,
-                ..Default::default()
-            }],
-        };
+        let dummy_cell_capacity_prb: u16 = 100;
         let metric_params = calculate_capacity(
             dummy_rnti,
-            &dummy_cell_info,
+            dummy_cell_capacity_prb,
             &dummy_dci_slice(),
             &false,
             &RNTI_SHARE_TYPE_ALL,

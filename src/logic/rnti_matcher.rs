@@ -343,8 +343,10 @@ fn handle_collect_dci(
 
     let start_timestamp_ms_bound = traffic_collection.start_timestamp_ms * TIME_MS_TO_US_FACTOR;
     for dci in dci_list.iter() {
-        if dci.ngscope_dci.time_stamp >= start_timestamp_ms_bound {
-            traffic_collection.update_from_cell_dci(&dci.ngscope_dci);
+        if let MessageDci::CellDci(ngscope_dci) = dci {
+            if ngscope_dci.time_stamp >= start_timestamp_ms_bound {
+                traffic_collection.update_from_cell_dci(ngscope_dci);
+            }
         }
     }
     RntiMatcherState::MatchingCollectDci(Box::new(traffic_collection))

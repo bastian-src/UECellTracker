@@ -83,7 +83,6 @@ fn deploy_app(
         app_args: app_args.clone(),
         rx_app_state: tx_app_state.add_rx(),
         tx_model_state: all_tx_states.model,
-        rx_cell_info: tx_cell_info.add_rx(),
         rx_dci: tx_dci.add_rx(),
         rx_rnti: tx_rnti.add_rx(),
         tx_metric,

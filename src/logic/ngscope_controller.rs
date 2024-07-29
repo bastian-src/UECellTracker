@@ -317,7 +317,11 @@ fn run_dci_fetcher(
             }
             LocalDciState::WaitForServerAuth(successful_auths) => {
                 dci_state = match ngscope_validate_server_check(&socket)? {
-                    Some(_) => {
+                    Some(msg) => {
+                        if let Message::Config(ngscope_cell_config) = msg {
+                            print_info(&format!("[ngcontrol] {:?}", ngscope_cell_config));
+                            broadcast_message_dci(&mut tx_dci, MessageDci::CellConfig(Box::new(ngscope_cell_config)));
+                        }
                         if successful_auths >= 1 {
                             LocalDciState::SuccessfulAuth
                         } else {
@@ -340,6 +344,19 @@ fn run_dci_fetcher(
         }
     }
     Ok(())
+}
+
+fn broadcast_message_dci(
+    tx_dci: &mut Bus<MessageDci>,
+    message_dci: MessageDci,
+) {
+    match tx_dci.try_broadcast(message_dci) {
+        Ok(_) => {}
+        Err(msg) => {
+            print_info("ERROR [ngcontrol] DCI bus is full!!");
+            tx_dci.broadcast(msg)
+        }
+    }
 }
 
 fn check_ngscope_message(
@@ -373,19 +390,11 @@ fn check_ngscope_message(
                         *last_dci_timestamp_us = cell_dci.time_stamp;
                     }
                     /* check bus size */
-                    let message_dci = MessageDci {
-                        ngscope_dci: *cell_dci,
-                    };
                     if *is_log_dci {
                         log_dci_buffer.push(*cell_dci.clone());
                     }
-                    match tx_dci.try_broadcast(message_dci) {
-                        Ok(_) => {}
-                        Err(msg) => {
-                            print_info("ERROR [ngcontrol] DCI bus is full!!");
-                            tx_dci.broadcast(msg)
-                        }
-                    }
+                    let message_dci = MessageDci::CellDci(Box::new(*cell_dci));
+                    broadcast_message_dci(tx_dci, message_dci)
                 }
                 Message::Dci(ue_dci) => {
                     // TODO: Evaluate how to handle this
@@ -394,6 +403,8 @@ fn check_ngscope_message(
                 Message::Config(cell_config) => {
                     // TODO: Evaluate how to handle this
                     print_info(&format!("[ngcontrol] {:?}", cell_config));
+                    let message_dci = MessageDci::CellConfig(Box::new(cell_config));
+                    broadcast_message_dci(tx_dci, message_dci)
                 }
                 // TODO: Evaluate how to handle Start andExit
                 Message::Start => {}

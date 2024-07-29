@@ -14,7 +14,7 @@ pub const NGSCOPE_MESSAGE_VERSION_POSITION: usize = 4;
 pub const NGSCOPE_MESSAGE_CONTENT_POSITION: usize = 5;
 pub const NGSCOPE_STRUCT_SIZE_DCI: usize = 40;
 pub const NGSCOPE_STRUCT_SIZE_CELL_DCI: usize = 856;
-pub const NGSCOPE_STRUCT_SIZE_CONFIG: usize = 12; // TODO: Determine this actually
+pub const NGSCOPE_STRUCT_SIZE_CONFIG: usize = 12;
 
 // IMPORTANT:
 // - when receiving messages, check the timestamp - due to UDP, messages might arrive out of order
@@ -70,9 +70,8 @@ impl Message {
                 )?))
             }
             MessageType::Config => {
-                check_size(bytes.len(), NGSCOPE_MESSAGE_VERSION_POSITION + 1)?;
-                let _version_byte: u8 = bytes[NGSCOPE_MESSAGE_VERSION_POSITION];
-                let content_bytes: &[u8] = &bytes[NGSCOPE_MESSAGE_CONTENT_POSITION..];
+                let content_bytes: &[u8] = &bytes[NGSCOPE_MESSAGE_VERSION_POSITION..];
+                check_size(content_bytes.len(), NGSCOPE_STRUCT_SIZE_CONFIG)?;
                 Message::Config(NgScopeCellConfig::from_bytes(content_bytes.try_into()?)?)
             }
             MessageType::Exit => Message::Exit,
