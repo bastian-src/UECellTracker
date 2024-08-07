@@ -1,3 +1,4 @@
+use std::net::SocketAddr;
 use std::os::unix::io::AsRawFd;
 use std::sync::mpsc::TryRecvError;
 use std::{
@@ -30,6 +31,7 @@ pub const DOWNLOADING_IDLE_SLEEP_TIME_MS: u64 = 20;
 pub const RECOVERY_SLEEP_TIME_MS: u64 = 2_000;
 pub const BETWEEN_DOWNLOADS_SLEEP_TIME_MS: u64 = 1_000;
 pub const RESTART_TIMEOUT_US: u64 = 2_000_000;
+pub const INITIAL_REQUEST_TIMEOUT_US: u64 = 5_000_000;
 pub const POST_DOWNLOAD_TIME_US: u64 = 2_000_000;
 
 pub const TCP_STREAM_READ_BUFFER_SIZE: usize = 100_000;
@@ -225,7 +227,7 @@ fn run(run_args: &mut RunArgs) -> Result<()> {
                 handle_finish_download(params)
             }
             DownloaderState::ErrorStartingDownload(message) => {
-                print_info(&format!("[download] error during download: {}", message));
+                print_info(&format!("[download] error: {}", message));
                 DownloaderState::SleepMs(
                     RECOVERY_SLEEP_TIME_MS,
                     Box::new(DownloaderState::StartDownload),
@@ -455,12 +457,15 @@ fn handle_post_download(download_stream_state: &mut DownloadStreamState) -> Down
 }
 
 fn create_download_stream(base_addr: &str, path: &str) -> Result<TcpStream> {
-    let mut stream = TcpStream::connect(base_addr)?;
-
     print_debug(&format!(
-        "DEBUG [download] create_download_stream.path: {}",
+        "DEBUG [download] initiating new download: {}",
         path
     ));
+    let socket_base_addr: SocketAddr = base_addr
+        .parse()
+        .unwrap_or_else(|_| panic!("Unable to parse socket address: {}", base_addr));
+    let mut stream = TcpStream::connect_timeout(&socket_base_addr, Duration::from_micros(INITIAL_REQUEST_TIMEOUT_US))?;
+    print_debug("DEBUG [download] initiated successfully, sending HTTP request..");
 
     // Send HTTP GET request
     let request = format!(
@@ -470,6 +475,7 @@ fn create_download_stream(base_addr: &str, path: &str) -> Result<TcpStream> {
         path
     );
     stream.write_all(request.as_bytes())?;
+    print_debug("DEBUG [download] sent HTTP request successfully.");
     stream.set_nonblocking(true)?;
 
     Ok(stream)
