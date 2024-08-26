@@ -90,9 +90,14 @@ pub struct MetricResult {
     pub transport_fair_share_capacity_bit_per_ms: u64,
     pub physical_fair_share_capacity_bit_per_ms: u64,
     pub physical_rate_bit_per_prb: u64,
-    /// If 1, all RNTIs are used to determine the bit/PRB rate (more general)
-    /// If 0, only the target-RNTI PRBs are used to determine the bit/PRB rate (more specific)
-    pub physical_rate_coarse_flag: u8,
+    /// If 2, all RNTIs are used to determine the bit/PRB rate (more general)
+    /// If 1, only the target-RNTI PRBs are used to determine the bit/PRB rate (more specific)
+    /// If 0, the static rate is used
+    pub physical_rate_mode: u8,
+    /// If 2, greedy
+    /// If 1, not soo fair
+    /// If 0, super fair
+    pub fair_share_type: u8,
     pub no_tbs_prb_ratio: f64,
 }
 
@@ -100,6 +105,7 @@ pub struct MetricResult {
 pub struct MetricBasis {
     pub nof_dci: u64,
     pub p_cell: u64,
+    pub p_idle: u64,
     pub nof_rnti_shared: u64,
     pub nof_rnti_in_dci: u64,
     pub rnti_share_type: u8,
@@ -115,6 +121,7 @@ pub struct MetricBasis {
 
 #[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
 pub struct LogMetric {
+    timestamp_us: u64,
     result: MetricResult,
     basis: MetricBasis,
 }
@@ -236,7 +243,9 @@ fn run(run_args: &mut RunArgs) -> Result<()> {
         };
         match rx_download_config.try_recv() {
             Ok(download_config) => {
-                last_rtt_us = Some(download_config.config.rtt_us);
+                if let Some(new_rtt_us) = download_config.config.rtt_us {
+                    last_rtt_us = Some(new_rtt_us);
+                }
                 last_rnti_share_type = download_config.config.rnti_share_type;
             }
             Err(TryRecvError::Empty) => {}
@@ -346,24 +355,19 @@ fn handle_calculate_metric(
             is_log_metric,
             rnti_share_type,
         ) {
-            let transport_capacity = metric_wrapper
-                .result
-                .transport_fair_share_capacity_bit_per_ms;
-            let physical_rate_flag = metric_wrapper.result.physical_rate_coarse_flag;
-            let physical_rate = metric_wrapper.result.physical_rate_bit_per_prb;
-            let no_tbs_prb_ratio = metric_wrapper.result.no_tbs_prb_ratio;
             let now_us = chrono::Local::now().timestamp_micros() as u64;
 
             tx_metric.broadcast(MessageMetric {
                 metric: MetricTypes::A(MetricA {
                     timestamp_us: now_us,
-                    fair_share_send_rate: transport_capacity,
+                    fair_share_type: metric_wrapper.result.fair_share_type,
+                    fair_share_send_rate: metric_wrapper.result.transport_fair_share_capacity_bit_per_ms,
                     latest_dci_timestamp_us: buffer_slice.first().unwrap().time_stamp,
                     oldest_dci_timestamp_us: buffer_slice.last().unwrap().time_stamp,
                     nof_dci: buffer_slice.len() as u16,
-                    no_tbs_prb_ratio,
-                    flag_phy_rate_all_rnti: physical_rate_flag,
-                    phy_rate: physical_rate,
+                    no_tbs_prb_ratio: metric_wrapper.result.no_tbs_prb_ratio,
+                    phy_rate_mode: metric_wrapper.result.physical_rate_mode,
+                    phy_rate: metric_wrapper.result.physical_rate_bit_per_prb,
                 }),
             });
         }
@@ -411,7 +415,7 @@ fn calculate_capacity(
             * 1000.0
             / (1024.0 * 1024.0),
         metric_wrapper.result.physical_rate_bit_per_prb,
-        metric_wrapper.result.physical_rate_coarse_flag,
+        metric_wrapper.result.physical_rate_mode,
         metric_wrapper.result.no_tbs_prb_ratio,
     ));
     Ok(metric_wrapper)
@@ -500,20 +504,22 @@ fn calculate_pbe_cc_capacity(
 
     // Flag to signialize that the bit per PRB rate does NOT belong to our RNTI and is a coarse
     // estimation
-    let mut r_w_coarse_flag: u8 = 0;
+    let r_w_mode: u8;
 
     // [bit/PRB]
     let r_w: u64 = if p_alloc_rnti == 0 {
-        r_w_coarse_flag = 1;
         if p_alloc > 0 {
             /* Use mean ratio of other RNTIs */
+            r_w_mode = 1;
             tbs_alloc_bit / p_alloc
         } else {
             /* Use bit per PRB rate from experience */
+            r_w_mode = 0;
             STANDARD_BIT_PER_PRB
         }
     } else {
         /* Use the bit per PRB of our RNTI */
+        r_w_mode = 2;
         tbs_alloc_rnti_bit / p_alloc_rnti
     };
 
@@ -570,10 +576,8 @@ fn calculate_pbe_cc_capacity(
     /*
      * Determine the fair share badnwidth c_p (physical layer) and c_t (transport layer)
      * */
-    let p_alloc_rnti_suggested: u64 =
-        p_alloc_rnti + ((p_idle + nof_rnti_shared - 1) / nof_rnti_shared);
-    let c_p: u64 =
-        ((r_w as f64 * (p_alloc_rnti + (p_alloc_rnti_suggested)) as f64) / nof_dci as f64) as u64;
+    let p_alloc_rnti_suggested: u64 = p_alloc_rnti + ((p_idle + nof_rnti_shared - 1) / nof_rnti_shared);
+    let c_p: u64 = (((r_w * p_alloc_rnti_suggested) as f64) / (nof_dci as f64)) as u64;
     let c_t = translate_physcial_to_transport_simple(c_p);
 
     let mut no_tbs_prb_ratio = 0.0;
@@ -611,17 +615,21 @@ fn calculate_pbe_cc_capacity(
         (tbs_alloc_rnti_bit as f64 / (nof_dci as f64)) * 1000.0 / (1024.0 * 1024.0),
     ));
 
+    let log_timestamp_us = chrono::Local::now().timestamp_micros() as u64;
     Ok(LogMetric {
+        timestamp_us: log_timestamp_us,
         result: MetricResult {
             physical_fair_share_capacity_bit_per_ms: c_p,
             transport_fair_share_capacity_bit_per_ms: c_t,
+            fair_share_type: used_rnti_share_type,
             physical_rate_bit_per_prb: r_w,
-            physical_rate_coarse_flag: r_w_coarse_flag,
+            physical_rate_mode: r_w_mode,
             no_tbs_prb_ratio,
         },
         basis: MetricBasis {
             nof_dci,
             p_cell,
+            p_idle,
             nof_rnti_shared,
             nof_rnti_in_dci: nof_rnti,
             rnti_share_type: used_rnti_share_type,
@@ -716,10 +724,10 @@ mod tests {
         )?;
         assert_eq!(
             metric_params.result.physical_fair_share_capacity_bit_per_ms,
-            33621
+            33280
         );
         assert_eq!(metric_params.result.physical_rate_bit_per_prb, 512);
-        assert_eq!(metric_params.result.physical_rate_coarse_flag, 0);
+        assert_eq!(metric_params.result.physical_rate_mode, 2);
         assert_eq!(metric_params.result.no_tbs_prb_ratio, 0.0);
         Ok(())
     }

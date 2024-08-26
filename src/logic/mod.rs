@@ -310,6 +310,8 @@ pub struct MessageDownloadConfig {
 pub struct MetricA {
     /// Timestamp when the metric was calculated
     timestamp_us: u64,
+    /// Fair (0), less fair (1) , Greedy (2)
+    fair_share_type: u8,
     /// Fair share send rate [bits/subframe] = [bits/ms]
     fair_share_send_rate: u64,
     /// Timestamp of the latest DCI used to calculate the metric
@@ -320,10 +322,10 @@ pub struct MetricA {
     nof_dci: u16,
     /// Ratio of no TBS PRBs to PRBs with TBS (~reTx ratio)
     no_tbs_prb_ratio: f64,
-    /// Flag, signalling whether phy_rate was averagerd over all RNTIs or just our UE RNTI
-    flag_phy_rate_all_rnti: u8,
-    /// Average bit per PRB (either over all RNTIs or just the UE RNTI)
+    /// Average bit per PRB
     phy_rate: u64,
+    /// Flag, signalling whether phy_rate was static (0) averagerd over all RNTIs (1) or just our UE RNTI (2)
+    phy_rate_mode: u8,
 }
 
 /*  --------------  */

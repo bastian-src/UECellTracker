@@ -1,5 +1,4 @@
 use std::net::SocketAddr;
-use std::os::unix::io::AsRawFd;
 use std::sync::mpsc::TryRecvError;
 use std::{
     collections::HashMap,
@@ -22,7 +21,7 @@ use crate::ngscope::types::NgScopeCellDci;
 use crate::{
     logger::{log_download, log_info},
     parse::{Arguments, FlattenedDownloadArgs, Scenario},
-    util::{determine_process_id, init_heap_buffer, print_debug, print_info, sockopt_get_tcp_info},
+    util::{determine_process_id, init_heap_buffer, print_debug, print_info},
 };
 
 pub const INITIAL_SLEEP_TIME_MS: u64 = 20_000;
@@ -104,7 +103,7 @@ struct RunArgs {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DownloadConfig {
-    pub rtt_us: u64,
+    pub rtt_us: Option<u64>,
     pub rnti_share_type: u8,
 }
 
@@ -210,7 +209,7 @@ fn run(run_args: &mut RunArgs) -> Result<()> {
                     rnti_share_type: determine_rnti_fair_share_type_by_path(&download_path),
                     ..Default::default()
                 };
-                handle_start_download(&mut current_download, stream_handle)
+                handle_start_download(&mut current_download, stream_handle, tx_download_config)
             }
             DownloaderState::Downloading => {
                 let params = DownloadingParameters {
@@ -313,7 +312,15 @@ fn handle_finish_download(finish_parameters: DownloadFinishParameters) -> Downlo
 fn handle_start_download(
     download_stream_state: &mut DownloadStreamState,
     stream_option: &mut Option<TcpStream>,
+    tx_download_config: &mut Bus<MessageDownloadConfig>,
 ) -> DownloaderState {
+    tx_download_config.broadcast(MessageDownloadConfig {
+        config: DownloadConfig {
+            rtt_us: None,
+            rnti_share_type: download_stream_state.rnti_share_type,
+        },
+    });
+
     match create_download_stream(
         &download_stream_state.base_addr,
         &download_stream_state.path,
@@ -368,7 +375,7 @@ fn handle_downloading(params: DownloadingParameters) -> DownloaderState {
                     });
                     tx_download_config.broadcast(MessageDownloadConfig {
                         config: DownloadConfig {
-                            rtt_us,
+                            rtt_us: Some(rtt_us),
                             rnti_share_type: *rnti_share_type,
                         },
                     });
@@ -479,14 +486,6 @@ fn create_download_stream(base_addr: &str, path: &str) -> Result<TcpStream> {
     stream.set_nonblocking(true)?;
 
     Ok(stream)
-}
-
-fn determine_socket_rtt(stream: &mut TcpStream) -> Result<u64> {
-    let socket_file_descriptor: i32 = stream.as_raw_fd();
-    let tcp_info = sockopt_get_tcp_info(socket_file_descriptor)?;
-    let rtt_us = tcp_info.tcpi_rtt as u64;
-    print_debug(&format!("DEBUG [determine_socket_rtt] rtt: {:?}", rtt_us));
-    Ok(rtt_us)
 }
 
 fn try_to_decode_rtt(buffer: &[u8], last_rtt_us: &mut Option<u64>) -> Option<u64> {
