@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use lazy_static::lazy_static;
-use libc::{c_void, getsockopt, socklen_t, TCP_INFO};
+use libc::{c_void, getsockopt, socklen_t, TCP_INFO, gettid};
 use std::mem;
 
 use crate::logger::log_info;
@@ -158,7 +158,8 @@ pub fn helper_json_pointer(
 
 pub fn determine_process_id() -> u64 {
     /* Taken from: https://github.com/alecmocatta/palaver/blob/cc955a9d56f187fe57a2d042e4ff4120d50dc3a7/src/thread.rs#L23 */
-    match Into::<libc::pid_t>::into(nix::unistd::gettid()).try_into() {
+    let gettid_res = unsafe { gettid() };
+    match Into::<libc::pid_t>::into(gettid_res).try_into() {
         Ok(res) => res,
         Err(_) => std::process::id() as u64,
     }
