@@ -185,10 +185,10 @@ fn run(run_args: &mut RunArgs) -> Result<()> {
         }
         unpack_all_rnti_messages(rx_rnti, &mut current_rnti)?;
         unpack_all_dci_messages(rx_dci, &mut current_download, &downloader_state, current_rnti)?;
+        thread::sleep(Duration::from_millis(DEFAULT_WORKER_SLEEP_MS));
         if is_idle_scenario(scenario) {
             continue; /* keep the thread running, because the Bus-reference must be kept alive for the model */
         }
-        thread::sleep(Duration::from_millis(DEFAULT_WORKER_SLEEP_MS));
         /* </precheck> */
 
         downloader_state = match downloader_state {
