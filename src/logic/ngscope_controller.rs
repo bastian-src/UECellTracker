@@ -15,7 +15,7 @@ use crate::logic::{
     CHANNEL_SYNC_SIZE, DEFAULT_WORKER_SLEEP_MS, DEFAULT_WORKER_SLEEP_US,
 };
 use crate::ngscope;
-use crate::ngscope::config::NgScopeConfig;
+use crate::ngscope::config::{NgScopeConfig, NgScopeConfigRfDev};
 use crate::ngscope::types::{Message, NgScopeCellDci};
 use crate::ngscope::{
     ngscope_validate_server_check, ngscope_validate_server_send_initial, start_ngscope,
@@ -95,6 +95,10 @@ fn run(run_args: &mut RunArgs, run_args_mov: RunArgsMovables) -> Result<()> {
     let ng_args = FlattenedNgScopeArgs::from_unflattened(app_args.clone().ngscope.unwrap())?;
     let mut ng_process_option: Option<Child> = None;
     let ngscope_config = NgScopeConfig {
+        rf_config0: Some(NgScopeConfigRfDev {
+            rf_args: ng_args.ng_rf_args.clone(),
+            ..Default::default()
+        }),
         ..Default::default()
     };
 
