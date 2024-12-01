@@ -210,7 +210,7 @@ def filter_dataset_fast(settings, raw_dataset) -> FilteredRecording:
         flattened: dict = {}
         for rnti, ue_data in cell_data['traffic'].items():
             if hasattr(settings, 'rnti'):
-                if settings.rnti is not None and rnti != settings.target_rnti:
+                if settings.rnti is not None and rnti != settings.rnti:
                     result.skipped_not_target_rnti += 1
                     continue
 
@@ -446,13 +446,20 @@ class IndexTracker:
 
 def standardize(settings):
     all_recordings = read_all_recordings(settings)
+    if len(all_recordings) == 0:
+        print_debug("ERROR!\n\nNo records left after applying pre-filter.\n\n")
+        raise Exception("No records available after applying pre-filter.")
     print(f"DEBUG len(all_data) {len(all_recordings)}")
     ul_timeline_matrix = np.zeros((len(all_recordings), 3))
     dci_time_deltas_matrix = np.zeros((len(all_recordings), 3))
     count_vec = np.zeros((len(all_recordings), 1))
     total_ul_vec = np.zeros((len(all_recordings), 1))
     for (index, recordings) in enumerate(all_recordings):
-        (ul_timeline, dci_time_deltas, count, total_ul_bytes) = determine_highest_count_ul_timeline(recordings)
+        try:
+            (ul_timeline, dci_time_deltas, count, total_ul_bytes) = determine_highest_count_ul_timeline(settings, recordings)
+        except Exception as e:
+            print_debug(f"Skipping dataset [{index}]: {e}")
+            continue
         count_vec[index] = count
         total_ul_vec[index] = total_ul_bytes
 
@@ -463,6 +470,9 @@ def standardize(settings):
         dci_time_deltas_matrix[index, 0] = np.median(dci_time_deltas)
         dci_time_deltas_matrix[index, 1] = np.mean(dci_time_deltas)
         dci_time_deltas_matrix[index, 2] = np.var(dci_time_deltas)
+    if len(count_vec) == 0:
+        print_debug("ERROR!\n\nNo record available. Maybe, you provided the wrong RNTI or all your RNTI traffic was removed in the static pre-filter?\n\n")
+        raise Exception("No record available to determine standardization parameters.")
 
     std_count = (np.mean(count_vec), np.std(count_vec))
     std_total_ul = (np.mean(total_ul_vec), np.std(total_ul_vec))
@@ -524,12 +534,14 @@ def read_all_recordings(settings):
     return all_runs
 
 
-def determine_highest_count_ul_timeline(df):
-    rnti = "11852"
+def determine_highest_count_ul_timeline(settings, df):
+    rnti = settings.rnti
     target_traffic: pd.DataFrame = pd.DataFrame()
 
-    if not rnti in df.columns:
+    if rnti is None:
         rnti = df.count().idxmax()
+    elif rnti not in df.columns:
+        raise Exception("Target RNTI was not part of record.")
     target_traffic = df[rnti].dropna()
 
     ul_timeline = target_traffic.values
@@ -784,7 +796,10 @@ if __name__ == "__main__":
 
     # standardize subcommand
     parser_standardize = subparsers.add_parser('standardize', help='Run standardize mode')
-
+    parser_standardize.add_argument('--rnti',
+                                    type=str,
+                                    default=None,
+                                    help='Use a recording only if this RNTI is part of it. Otherwise, use the RNTI with the most UL occurences.')
     # export subcommand
     parser_export = subparsers.add_parser('export', help='Run export mode')
     parser_export.add_argument('--export-path',
