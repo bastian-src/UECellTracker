@@ -67,6 +67,25 @@ The configuration can be made persistently by editing/adding `/etc/sysctl.d/`.
 
 ### Visualize RNTI Matching
 
+#### Diashow
+
+<details>
+<summary>Click to expand</summary>
+
+Visualize the UL traffic of all RNTIs that are left after applying the
+pre-filter. Provide `--rnti RNTI` in case you want to filter for a
+certain RNTI in the first place.
+
+The output shows how many RNTIs were filtered by the corresponding pre-filter.
+
+Example usage *without* an explicit RNTI:
+
+```
+./scripts/visualize_rnti_matching.py --path ".logs.ue/run-<run-date>/rnti_matching/run_<run-date>_traffic_collection.jsonl" diashow
+```
+
+</details>
+
 #### Standardize
 
 <details>
