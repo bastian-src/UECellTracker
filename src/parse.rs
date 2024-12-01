@@ -462,3 +462,120 @@ impl FlattenedDownloadArgs {
         })
     }
 }
+
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+
+    #[test]
+    fn test_parse_default() {
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+        let config_path = temp_dir.path().join("ue-cell-tracker.yaml");
+        fs::write(&config_path, DEFAULT_CONFIG_STR).expect("Failed to write config");
+
+        let parsed_args: Arguments = confy::load_path(&config_path)
+            .expect("Error loading ue-cell-tracker config");
+
+        let default_args = Arguments::default();
+        assert_eq!(parsed_args, default_args);
+    }
+
+
+    #[test]
+    fn test_parse_partial() {
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+        let config_path = temp_dir.path().join("ue-cell-tracker.yaml");
+        fs::write(&config_path, PARTIAL_CONFIG_STR).expect("Failed to write config");
+
+        let parsed_args: Arguments = confy::load_path(&config_path)
+            .expect("Error loading ue-cell-tracker config");
+
+        let partial_args = Arguments {
+            cellapi: Some(CellApiConfig::DevicePublisher),
+            log: Some(LogArgs {
+              log_base_dir: Some("./.logs.ue/".to_string()),
+            }),
+            scenario: Some(Scenario::TrackUeAndEstimateTransportCapacity),
+            milesight: None,
+            devicepublisher: None,
+            ngscope: None,
+            rntimatching: None,
+            model: None,
+            download: None,
+            verbose: None,
+        };
+        assert_eq!(parsed_args, partial_args);
+    }
+
+
+    #[allow(dead_code)]
+    const DEFAULT_CONFIG_STR: &str =
+r#"scenario: TrackUeAndEstimateTransportCapacity
+cellapi: Milesight
+milesight:
+  milesight_address: http://127.0.0.1
+  milesight_user: root
+  milesight_auth: root-password
+devicepublisher:
+  devpub_address: https://some.address
+  devpub_auth: some_auth
+ngscope:
+  ng_path: /dev_ws/dependencies/ng-scope/build_x86/ngscope/src/
+  ng_local_addr: 0.0.0.0:9191
+  ng_server_addr: 0.0.0.0:6767
+  ng_log_file: ./.ng_scope_log.txt
+  ng_start_process: true
+  ng_log_dci: true
+  ng_log_dci_batch_size: 60000
+rntimatching:
+  matching_local_addr: 0.0.0.0:9292
+  matching_traffic_pattern:
+  - A
+  matching_traffic_destination: 1.1.1.1:53
+  matching_log_traffic: true
+model:
+  model_send_metric_interval_value: 1.0
+  model_send_metric_interval_type: RttFactor
+  model_metric_smoothing_size_value: 1.0
+  model_metric_smoothing_size_type: RttFactor
+  model_log_metric: true
+log:
+  log_base_dir: ./.logs.ue/
+download:
+  download_base_addr: http://some.addr
+  download_paths:
+  - /10s/cubic
+  - /10s/bbr
+  - /10s/pbe/fair0/init
+  - /10s/pbe/fair0/upper
+  - /10s/pbe/fair0/init_and_upper
+  - /10s/pbe/fair0/direct
+  - /10s/pbe/fair1/init
+  - /10s/pbe/fair1/upper
+  - /10s/pbe/fair1/init_and_upper
+  - /10s/pbe/fair1/direct
+  - /60s/cubic
+  - /60s/bbr
+  - /60s/pbe/fair0/init
+  - /60s/pbe/fair0/upper
+  - /60s/pbe/fair0/init_and_upper
+  - /60s/pbe/fair0/direct
+  - /60s/pbe/fair1/init
+  - /60s/pbe/fair1/upper
+  - /60s/pbe/fair1/init_and_upper
+  - /60s/pbe/fair1/direct
+verbose: true"#;
+
+    #[allow(dead_code)]
+    const PARTIAL_CONFIG_STR: &str =
+r#"scenario: TrackUeAndEstimateTransportCapacity
+cellapi: DevicePublisher
+log:
+  log_base_dir: ./.logs.ue/"#;
+
+}
