@@ -1,10 +1,8 @@
 flask
-marshmallow
-matplotlib
-jsonlines
-seaborn
-json
-linecache
-pandas
-pyarrow
-glob
+marshmallow==3.21.3
+matplotlib==3.9.1
+jsonlines==4.0.0
+seaborn==0.13.2
+pandas==2.1.4
+pyarrow==17.0.0
+numpy==1.24.4
