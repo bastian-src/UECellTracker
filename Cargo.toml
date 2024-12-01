@@ -30,4 +30,5 @@ serde_json = "1.0.116"
 serde_libconfig = "0.0.2"
 serde_yaml = "0.9.34"
 strum_macros = "0.26.2"
+tempfile = "3.14.0"
 tokio = { version = "1.37.0", features = ["full", "sync"] }
