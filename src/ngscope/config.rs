@@ -116,7 +116,6 @@ pub fn write_config(config: &NgScopeConfig, file_path: &str) -> Result<()> {
 // https://crates.io/crates/libconfig-rs
 
 #[cfg(test)]
-
 mod tests {
     use super::*;
 
