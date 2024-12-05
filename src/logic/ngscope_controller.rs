@@ -15,13 +15,13 @@ use crate::logic::{
     CHANNEL_SYNC_SIZE, DEFAULT_WORKER_SLEEP_MS, DEFAULT_WORKER_SLEEP_US,
 };
 use crate::ngscope;
-use crate::ngscope::config::NgScopeConfig;
+use crate::ngscope::config::{NgScopeConfig, NgScopeConfigRfDev};
 use crate::ngscope::types::{Message, NgScopeCellDci};
 use crate::ngscope::{
     ngscope_validate_server_check, ngscope_validate_server_send_initial, start_ngscope,
     stop_ngscope,
 };
-use crate::parse::{Arguments, FlattenedNgScopeArgs};
+use crate::parse::{Arguments, FlattenedNgScopeArgs, FlattenedNgScopeSdrConfigArgs};
 use crate::util::{determine_process_id, is_debug, print_debug, print_info};
 
 const WAIT_FOR_TRIGGER_NGSCOPE_RESPONE_MS: u64 = 500;
@@ -94,9 +94,6 @@ fn run(run_args: &mut RunArgs, run_args_mov: RunArgsMovables) -> Result<()> {
 
     let ng_args = FlattenedNgScopeArgs::from_unflattened(app_args.clone().ngscope.unwrap())?;
     let mut ng_process_option: Option<Child> = None;
-    let ngscope_config = NgScopeConfig {
-        ..Default::default()
-    };
 
     let (tx_dci_thread, rx_main_thread) = sync_channel::<LocalDciState>(CHANNEL_SYNC_SIZE);
     let (tx_main_thread, rx_dci_thread) = sync_channel::<LocalDciState>(CHANNEL_SYNC_SIZE);
@@ -123,7 +120,7 @@ fn run(run_args: &mut RunArgs, run_args_mov: RunArgsMovables) -> Result<()> {
 
         match ngcontrol_state {
             NgControlState::CheckingCellInfo => {
-                ngcontrol_state = handle_cell_update(rx_cell_info, &ngscope_config)?;
+                ngcontrol_state = handle_cell_update(rx_cell_info, &ng_args.ng_sdr_config)?;
             }
             NgControlState::TriggerListenDci => {
                 tx_dci_thread.send(LocalDciState::SendInitial)?;
@@ -233,7 +230,7 @@ fn handle_start_ngscope(
 
 fn handle_cell_update(
     rx_cell_info: &mut BusReader<MessageCellInfo>,
-    ng_conf: &NgScopeConfig,
+    ng_sdr_config: &FlattenedNgScopeSdrConfigArgs,
 ) -> Result<NgControlState> {
     match check_cell_update(rx_cell_info)? {
         Some(cell_info) => {
@@ -241,10 +238,7 @@ fn handle_cell_update(
             if cell_info.cells.is_empty() {
                 return Ok(NgControlState::StopNgScope);
             }
-            // TODO: Handle multi cell
-            let mut new_conf = ng_conf.clone();
-            new_conf.rf_config0.as_mut().unwrap().rf_freq =
-                cell_info.cells.first().unwrap().frequency as i64;
+            let new_conf = NgScopeConfig::from_cell(ng_sdr_config, &cell_info)?;
             Ok(NgControlState::StartNgScope(Box::new(new_conf)))
         }
         _ => Ok(NgControlState::CheckingCellInfo),
@@ -474,5 +468,50 @@ fn check_cell_update(rx_cell_info: &mut BusReader<MessageCellInfo>) -> Result<Op
             Err(anyhow!("[ngcontrol] err: rx_cell_info disconnected!"))
         }
         Err(TryRecvError::Empty) => Ok(None),
+    }
+}
+
+impl NgScopeConfig {
+    pub fn from_cell(ng_sdr_config: &FlattenedNgScopeSdrConfigArgs, cell_info: &CellInfo) -> Result<NgScopeConfig> {
+        let mut ng_conf: NgScopeConfig = NgScopeConfig {
+            rf_config0: Some(NgScopeConfigRfDev {
+                rf_freq: cell_info.cells.first().ok_or_else(|| anyhow!("[ngcontrol] CellInfo.cells are empty while building NgScopeConfig"))?
+                                                .frequency as i64,
+                N_id_2: ng_sdr_config.ng_sdr_a.ng_sdr_a_n_id,
+                rf_args: format!("serial={}", ng_sdr_config.ng_sdr_a.ng_sdr_a_serial),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        if cell_info.cells.len() >= 2 {
+            if let Some(ng_sdr_b) = &ng_sdr_config.ng_sdr_b {
+                ng_conf.rf_config1 = Some(NgScopeConfigRfDev {
+                    rf_freq: cell_info.cells[1].frequency as i64,
+                    N_id_2: ng_sdr_b.ng_sdr_b_n_id,
+                    rf_args: format!("serial={}", ng_sdr_b.ng_sdr_b_serial),
+                    ..Default::default()
+                });
+            }
+            else {
+                print_info("[ngcontrol] two cells identified, but second SDR not configured! (continuing with one)");
+                return Ok(ng_conf)
+            }
+        }
+
+        if cell_info.cells.len() >= 3 {
+            if let Some(ng_sdr_c) = &ng_sdr_config.ng_sdr_c {
+                ng_conf.rf_config2 = Some(NgScopeConfigRfDev {
+                    rf_freq: cell_info.cells[2].frequency as i64,
+                    N_id_2: ng_sdr_c.ng_sdr_c_n_id,
+                    rf_args: format!("serial={}", ng_sdr_c.ng_sdr_c_serial),
+                    ..Default::default()
+                });
+            } else {
+                print_info("[ngcontrol] three cells identified, but third SDR not configured! (continuing with two)");
+                return Ok(ng_conf)
+            }
+        }
+        Ok(ng_conf)
     }
 }

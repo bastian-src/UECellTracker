@@ -1,5 +1,5 @@
 /// Credits: https://stackoverflow.com/questions/55133351/is-there-a-way-to-get-clap-to-use-default-values-from-a-file
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use clap::{Args, Command, CommandFactory, Parser, ValueEnum};
 use serde::{Deserialize, Serialize};
 use std::{default, error::Error, path::PathBuf};
@@ -147,6 +147,10 @@ pub struct NgScopeArgs {
     #[arg(long, required = false)]
     pub ng_server_addr: Option<String>,
 
+    /// SDR configuration
+    #[command(flatten)]
+    pub ng_sdr_config: Option<NgScopeSdrConfigArgs>,
+
     /// Filepath for stdout + stderr logging of the NG-Scope process
     #[arg(long, required = false)]
     pub ng_log_file: Option<String>,
@@ -164,15 +168,90 @@ pub struct NgScopeArgs {
     pub ng_log_dci_batch_size: Option<u64>,
 }
 
+#[derive(Args, Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NgScopeSdrConfigArgs {
+    /// SDR A
+    #[command(flatten)]
+    pub ng_sdr_a: Option<NgScopeSdrConfigArgsA>,
+
+    /// SDR B
+    #[command(flatten)]
+    pub ng_sdr_b: Option<NgScopeSdrConfigArgsB>,
+
+    /// SDR C
+    #[command(flatten)]
+    pub ng_sdr_c: Option<NgScopeSdrConfigArgsC>,
+}
+
+
+#[derive(Args, Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NgScopeSdrConfigArgsA {
+    /// SDR USB serial identifier
+    #[arg(long, required = false)]
+    ng_sdr_a_serial: Option<String>,
+
+    /// NG-Scope cell selection parameter
+    #[arg(long, required = false)]
+    ng_sdr_a_n_id: Option<i16>,
+}
+
+#[derive(Args, Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NgScopeSdrConfigArgsB {
+    /// SDR USB serial identifier
+    #[arg(long, required = false)]
+    ng_sdr_b_serial: Option<String>,
+
+    /// NG-Scope cell selection parameter
+    #[arg(long, required = false)]
+    ng_sdr_b_n_id: Option<i16>,
+}
+
+#[derive(Args, Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NgScopeSdrConfigArgsC {
+    /// SDR USB serial identifier
+    #[arg(long, required = false)]
+    ng_sdr_c_serial: Option<String>,
+
+    /// NG-Scope cell selection parameter
+    #[arg(long, required = false)]
+    ng_sdr_c_n_id: Option<i16>,
+}
+
 #[derive(Clone, Debug)]
 pub struct FlattenedNgScopeArgs {
     pub ng_path: String,
     pub ng_local_addr: String,
     pub ng_server_addr: String,
+    pub ng_sdr_config: FlattenedNgScopeSdrConfigArgs,
     pub ng_log_file: Option<String>,
     pub ng_start_process: bool,
     pub ng_log_dci: bool,
     pub ng_log_dci_batch_size: u64,
+}
+
+#[derive(Clone, Debug)]
+pub struct FlattenedNgScopeSdrConfigArgs {
+    pub ng_sdr_a: FlattenedNgScopeSdrConfigArgsA,
+    pub ng_sdr_b: Option<FlattenedNgScopeSdrConfigArgsB>,
+    pub ng_sdr_c: Option<FlattenedNgScopeSdrConfigArgsC>,
+}
+
+#[derive(Clone, Debug)]
+pub struct FlattenedNgScopeSdrConfigArgsA {
+    pub ng_sdr_a_serial: String,
+    pub ng_sdr_a_n_id: i16,
+}
+
+#[derive(Clone, Debug)]
+pub struct FlattenedNgScopeSdrConfigArgsB {
+    pub ng_sdr_b_serial: String,
+    pub ng_sdr_b_n_id: i16,
+}
+
+#[derive(Clone, Debug)]
+pub struct FlattenedNgScopeSdrConfigArgsC {
+    pub ng_sdr_c_serial: String,
+    pub ng_sdr_c_n_id: i16,
 }
 
 #[derive(Args, Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -289,6 +368,14 @@ impl default::Default for Arguments {
                 ng_start_process: Some(true),
                 ng_log_dci: Some(true),
                 ng_log_dci_batch_size: Some(60000),
+                ng_sdr_config: Some(NgScopeSdrConfigArgs {
+                    ng_sdr_a: Some(NgScopeSdrConfigArgsA {
+                        ng_sdr_a_serial: Some("3295B62".to_string()),
+                        ng_sdr_a_n_id: Some(-1),
+                    }),
+                    ng_sdr_b: None,
+                    ng_sdr_c: None,
+                }),
             }),
             rntimatching: Some(RntiMatchingArgs {
                 matching_local_addr: Some("0.0.0.0:9292".to_string()),
@@ -417,7 +504,55 @@ impl FlattenedNgScopeArgs {
             ng_log_file: ng_args.ng_log_file,
             ng_log_dci: ng_args.ng_log_dci.unwrap(),
             ng_log_dci_batch_size: ng_args.ng_log_dci_batch_size.unwrap(),
+            ng_sdr_config: FlattenedNgScopeSdrConfigArgs::from_unflattened(ng_args.ng_sdr_config.unwrap())?,
         })
+    }
+}
+
+impl FlattenedNgScopeSdrConfigArgs {
+    pub fn from_unflattened(ng_sdr_config: NgScopeSdrConfigArgs) -> Result<FlattenedNgScopeSdrConfigArgs> {
+        Ok(FlattenedNgScopeSdrConfigArgs {
+            ng_sdr_a: FlattenedNgScopeSdrConfigArgsA::from_unflattened(ng_sdr_config.ng_sdr_a.unwrap())?,
+            ng_sdr_b: FlattenedNgScopeSdrConfigArgsB::from_some_unflattened(ng_sdr_config.ng_sdr_b).ok(),
+            ng_sdr_c: FlattenedNgScopeSdrConfigArgsC::from_some_unflattened(ng_sdr_config.ng_sdr_c).ok(),
+        })
+    }
+}
+
+impl FlattenedNgScopeSdrConfigArgsA {
+    pub fn from_unflattened(ng_sdr_a: NgScopeSdrConfigArgsA) -> Result<FlattenedNgScopeSdrConfigArgsA> {
+        Ok(FlattenedNgScopeSdrConfigArgsA {
+            ng_sdr_a_serial: ng_sdr_a.ng_sdr_a_serial.expect("ng_sdr_a_serial missing"),
+            ng_sdr_a_n_id: ng_sdr_a.ng_sdr_a_n_id.unwrap_or(-1),
+        })
+    }
+}
+
+impl FlattenedNgScopeSdrConfigArgsB {
+    pub fn from_some_unflattened(ng_sdr_b_option: Option<NgScopeSdrConfigArgsB>) -> Result<FlattenedNgScopeSdrConfigArgsB> {
+        if let Some(ng_sdr_b) = ng_sdr_b_option {
+            Ok(FlattenedNgScopeSdrConfigArgsB {
+                ng_sdr_b_serial: ng_sdr_b.ng_sdr_b_serial.expect("ng_sdr_b_serial missing"),
+                ng_sdr_b_n_id: ng_sdr_b.ng_sdr_b_n_id.unwrap_or(-1),
+            })
+        }
+        else {
+            Err(anyhow!("")) // ok, none should've been parsed
+        }
+    }
+}
+
+impl FlattenedNgScopeSdrConfigArgsC {
+    pub fn from_some_unflattened(ng_sdr_c_option: Option<NgScopeSdrConfigArgsC>) -> Result<FlattenedNgScopeSdrConfigArgsC> {
+        if let Some(ng_sdr_c) = ng_sdr_c_option {
+            Ok(FlattenedNgScopeSdrConfigArgsC {
+                ng_sdr_c_serial: ng_sdr_c.ng_sdr_c_serial.expect("ng_sdr_c_serial missing"),
+                ng_sdr_c_n_id: ng_sdr_c.ng_sdr_c_n_id.unwrap_or(-1),
+            })
+        }
+        else {
+            Err(anyhow!("")) // ok, none should've been parsed
+        }
     }
 }
 
@@ -461,4 +596,245 @@ impl FlattenedDownloadArgs {
             download_paths: download_args.download_paths.unwrap(),
         })
     }
+}
+
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+
+    #[test]
+    fn test_parse_default() {
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+        let config_path = temp_dir.path().join("ue-cell-tracker.yaml");
+        fs::write(&config_path, DEFAULT_CONFIG_STR).expect("Failed to write config");
+
+        let parsed_args: Arguments = confy::load_path(&config_path)
+            .expect("Error loading ue-cell-tracker config");
+
+        let default_args = Arguments::default();
+        assert_eq!(parsed_args, default_args);
+    }
+
+
+    #[test]
+    fn test_parse_partial() {
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+        let config_path = temp_dir.path().join("ue-cell-tracker.yaml");
+        fs::write(&config_path, PARTIAL_CONFIG_STR).expect("Failed to write config");
+
+        let parsed_args: Arguments = confy::load_path(&config_path)
+            .expect("Error loading ue-cell-tracker config");
+
+        let partial_args = Arguments {
+            cellapi: Some(CellApiConfig::DevicePublisher),
+            log: Some(LogArgs {
+              log_base_dir: Some("./.logs.ue/".to_string()),
+            }),
+            scenario: Some(Scenario::TrackUeAndEstimateTransportCapacity),
+            milesight: None,
+            devicepublisher: None,
+            ngscope: None,
+            rntimatching: None,
+            model: None,
+            download: None,
+            verbose: None,
+        };
+        assert_eq!(parsed_args, partial_args);
+    }
+
+    #[test]
+    fn test_parse_partial_ng_sdr() {
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+        let config_path = temp_dir.path().join("ue-cell-tracker.yaml");
+        fs::write(&config_path, PARTIAL_CONFIG_NG_SDR_STR).expect("Failed to write config");
+
+        let parsed_args: Arguments = confy::load_path(&config_path)
+            .expect("Error loading ue-cell-tracker config");
+
+        let partial_args = Arguments {
+            cellapi: None,
+            log: None,
+            scenario: None,
+            milesight: None,
+            devicepublisher: None,
+            ngscope: Some(NgScopeArgs {
+                ng_path: None,
+                ng_local_addr: None,
+                ng_server_addr: None,
+                ng_sdr_config: Some(NgScopeSdrConfigArgs {
+                    ng_sdr_a: Some(NgScopeSdrConfigArgsA {
+                        ng_sdr_a_serial: Some("A2C5B62".to_string()),
+                        ng_sdr_a_n_id: Some(0),
+                    }),
+                    ng_sdr_b: Some(NgScopeSdrConfigArgsB {
+                        ng_sdr_b_serial: Some("C2B5513".to_string()),
+                        ng_sdr_b_n_id: Some(-1),
+                    }),
+                    ng_sdr_c: Some(NgScopeSdrConfigArgsC {
+                        ng_sdr_c_serial: Some("D2D0F61".to_string()),
+                        ng_sdr_c_n_id: Some(1),
+                    }),
+                }),
+                ng_log_file: None,
+                ng_start_process: None,
+                ng_log_dci: None,
+                ng_log_dci_batch_size: None,
+            }),
+            rntimatching: None,
+            model: None,
+            download: None,
+            verbose: None,
+        };
+        assert_eq!(parsed_args, partial_args);
+    }
+
+    #[test]
+    fn test_parse_partial_ng_sdr_default_n_id() {
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+        let config_path = temp_dir.path().join("ue-cell-tracker.yaml");
+        fs::write(&config_path, PARTIAL_CONFIG_NG_SDR_TWO_STR).expect("Failed to write config");
+
+        let parsed_args: Arguments = confy::load_path(&config_path)
+            .expect("Error loading ue-cell-tracker config");
+
+        let partial_args = Arguments {
+            cellapi: None,
+            log: None,
+            scenario: None,
+            milesight: None,
+            devicepublisher: None,
+            ngscope: Some(NgScopeArgs {
+                ng_path: None,
+                ng_local_addr: None,
+                ng_server_addr: None,
+                ng_sdr_config: Some(NgScopeSdrConfigArgs {
+                    ng_sdr_a: Some(NgScopeSdrConfigArgsA {
+                        ng_sdr_a_serial: Some("A2C5B62".to_string()),
+                        ng_sdr_a_n_id: None,
+                    }),
+                    ng_sdr_b: Some(NgScopeSdrConfigArgsB {
+                        ng_sdr_b_serial: Some("C2B5513".to_string()),
+                        ng_sdr_b_n_id: None,
+                    }),
+                    ng_sdr_c: None,
+                }),
+                ng_log_file: None,
+                ng_start_process: None,
+                ng_log_dci: None,
+                ng_log_dci_batch_size: None,
+            }),
+            rntimatching: None,
+            model: None,
+            download: None,
+            verbose: None,
+        };
+        assert_eq!(parsed_args, partial_args);
+    }
+
+    #[allow(dead_code)]
+    const DEFAULT_CONFIG_STR: &str =
+r#"
+scenario: TrackUeAndEstimateTransportCapacity
+cellapi: Milesight
+milesight:
+  milesight_address: http://127.0.0.1
+  milesight_user: root
+  milesight_auth: root-password
+devicepublisher:
+  devpub_address: https://some.address
+  devpub_auth: some_auth
+ngscope:
+  ng_path: /dev_ws/dependencies/ng-scope/build_x86/ngscope/src/
+  ng_local_addr: 0.0.0.0:9191
+  ng_server_addr: 0.0.0.0:6767
+  ng_sdr_config:
+    ng_sdr_a:
+      ng_sdr_a_serial: 3295B62
+      ng_sdr_a_n_id: -1
+  ng_log_file: ./.ng_scope_log.txt
+  ng_start_process: true
+  ng_log_dci: true
+  ng_log_dci_batch_size: 60000
+rntimatching:
+  matching_local_addr: 0.0.0.0:9292
+  matching_traffic_pattern:
+  - A
+  matching_traffic_destination: 1.1.1.1:53
+  matching_log_traffic: true
+model:
+  model_send_metric_interval_value: 1.0
+  model_send_metric_interval_type: RttFactor
+  model_metric_smoothing_size_value: 1.0
+  model_metric_smoothing_size_type: RttFactor
+  model_log_metric: true
+log:
+  log_base_dir: ./.logs.ue/
+download:
+  download_base_addr: http://some.addr
+  download_paths:
+  - /10s/cubic
+  - /10s/bbr
+  - /10s/pbe/fair0/init
+  - /10s/pbe/fair0/upper
+  - /10s/pbe/fair0/init_and_upper
+  - /10s/pbe/fair0/direct
+  - /10s/pbe/fair1/init
+  - /10s/pbe/fair1/upper
+  - /10s/pbe/fair1/init_and_upper
+  - /10s/pbe/fair1/direct
+  - /60s/cubic
+  - /60s/bbr
+  - /60s/pbe/fair0/init
+  - /60s/pbe/fair0/upper
+  - /60s/pbe/fair0/init_and_upper
+  - /60s/pbe/fair0/direct
+  - /60s/pbe/fair1/init
+  - /60s/pbe/fair1/upper
+  - /60s/pbe/fair1/init_and_upper
+  - /60s/pbe/fair1/direct
+verbose: true
+"#;
+
+    #[allow(dead_code)]
+    const PARTIAL_CONFIG_STR: &str =
+r#"
+scenario: TrackUeAndEstimateTransportCapacity
+cellapi: DevicePublisher
+log:
+  log_base_dir: ./.logs.ue/
+"#;
+
+    #[allow(dead_code)]
+    const PARTIAL_CONFIG_NG_SDR_STR: &str =
+r#"
+ngscope:
+  ng_sdr_config:
+    ng_sdr_a:
+      ng_sdr_a_serial: A2C5B62
+      ng_sdr_a_n_id: 0
+    ng_sdr_b:
+      ng_sdr_b_serial: C2B5513
+      ng_sdr_b_n_id: -1
+    ng_sdr_c:
+      ng_sdr_c_serial: D2D0F61
+      ng_sdr_c_n_id: 1
+"#;
+
+    #[allow(dead_code)]
+    const PARTIAL_CONFIG_NG_SDR_TWO_STR: &str =
+r#"
+ngscope:
+  ng_sdr_config:
+    ng_sdr_a:
+      ng_sdr_a_serial: A2C5B62
+    ng_sdr_b:
+      ng_sdr_b_serial: C2B5513
+"#;
+
+
 }
