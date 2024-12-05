@@ -8,6 +8,7 @@ use crate::{logic::traffic_patterns::RntiMatchingTrafficPatternType, util::print
 
 pub const DEFAULT_SCENARIO: Scenario = Scenario::TrackUeAndEstimateTransportCapacity;
 pub const DEFAULT_LOG_BASE_DIR: &str = "./.logs.ue/";
+pub const DEFAULT_NG_RF_ARGS: &str = "serial=3295B62";
 pub const DEFAULT_DOWNLOAD_BASE_ADDR: &str = "http://some.addr";
 pub const DEFAULT_DOWNLOAD_PATHS: &[&str] = &[
     "/10s/cubic",
@@ -162,6 +163,10 @@ pub struct NgScopeArgs {
     /// Determine the number of DCIs contained in a single log file
     #[arg(long, required = false)]
     pub ng_log_dci_batch_size: Option<u64>,
+
+    /// rf_args such as setting serial (allowing configuration of which SDR to use)
+    #[arg(long, required = false)]
+    pub ng_rf_args: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -173,6 +178,7 @@ pub struct FlattenedNgScopeArgs {
     pub ng_start_process: bool,
     pub ng_log_dci: bool,
     pub ng_log_dci_batch_size: u64,
+    pub ng_rf_args: String,
 }
 
 #[derive(Args, Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -289,6 +295,7 @@ impl default::Default for Arguments {
                 ng_start_process: Some(true),
                 ng_log_dci: Some(true),
                 ng_log_dci_batch_size: Some(60000),
+                ng_rf_args: Some(DEFAULT_NG_RF_ARGS.to_string()),
             }),
             rntimatching: Some(RntiMatchingArgs {
                 matching_local_addr: Some("0.0.0.0:9292".to_string()),
@@ -417,6 +424,7 @@ impl FlattenedNgScopeArgs {
             ng_log_file: ng_args.ng_log_file,
             ng_log_dci: ng_args.ng_log_dci.unwrap(),
             ng_log_dci_batch_size: ng_args.ng_log_dci_batch_size.unwrap(),
+            ng_rf_args: ng_args.ng_rf_args.unwrap(),
         })
     }
 }
