@@ -229,3 +229,15 @@ pub fn init_heap_buffer(size: usize) -> Box<[u8]> {
     vec.resize_with(size, || 0);
     vec.into_boxed_slice()
 }
+
+pub trait UpdateIfSome<T> {
+    fn update_if_some(&mut self, other: Option<T>);
+}
+
+impl<T> UpdateIfSome<T> for Option<T> {
+    fn update_if_some(&mut self, other: Option<T>) {
+        if let Some(value) = other {
+            *self = Some(value);
+        }
+    }
+}
