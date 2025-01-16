@@ -4,34 +4,68 @@ use clap::{Args, Command, CommandFactory, Parser, ValueEnum};
 use serde::{Deserialize, Serialize};
 use std::{default, error::Error, path::PathBuf};
 
-use crate::{logic::traffic_patterns::RntiMatchingTrafficPatternType, util::print_debug};
+use crate::{logic::traffic_patterns::RntiMatchingTrafficPatternType, util::print_info};
 
 pub const DEFAULT_SCENARIO: Scenario = Scenario::TrackUeAndEstimateTransportCapacity;
+pub const DEFAULT_VERBOSE: bool = true;
+pub const DEFAULT_CELL_API: CellApiConfig = CellApiConfig::Milesight;
+
+pub const DEFAULT_MILESIGHT_ADDRESS: &str = "http://127.0.0.1:8080";
+pub const DEFAULT_MILESIGHT_USER: &str = "root";
+pub const DEFAULT_MILESIGHT_AUTH: &str = "root-password";
+
+//port is implicitly always 7573 or something like that; might make sense to make it modifiable..
+pub const DEFAULT_DEVPUB_ADDRESS: &str = "127.0.0.1";
+pub const DEFAULT_DEVPUB_AUTH: &str = "some_auth";
+
+pub const DEFAULT_NG_PATH: &str = "/dev_ws/dependencies/ng-scope/build_x86/ngscope/src/ngscope";
+pub const DEFAULT_NG_LOCAL_ADDR: &str = "0.0.0.0:9191";
+pub const DEFAULT_NG_SERVER_ADDR: &str = "0.0.0.0:6767";
+pub const DEFAULT_NG_LOG_FILE: &str = "./.ng_scope_log.txt";
+pub const DEFAULT_NG_START_PROCESS: bool = true;
+pub const DEFAULT_NG_LOG_DCI: bool = true;
+pub const DEFAULT_NG_LOG_DCI_BATCH_SIZE: u64 = 60000;
+
+pub const DEFAULT_MATCHING_LOCAL_ADDR: &str = "0.0.0.0:9292";
+pub const DEFAULT_MATCHING_TRAFFIC_PATTERN: &[RntiMatchingTrafficPatternType] = &[RntiMatchingTrafficPatternType::A];
+pub const DEFAULT_MATCHING_TRAFFIC_DEST: &str = "127.0.0.1:9494";
+pub const DEFAULT_MATCHING_LOG_TRAFFIC: bool = true;
+
+pub const DEFAULT_MODEL_INTERVAL_VALUE: f64 = 1.0;
+pub const DEFAULT_MODEL_INTERVAL_TYPE: DynamicValue = DynamicValue::RttFactor;
+pub const DEFAULT_MODEL_SMOOTHING_VALUE: f64 = 1.0;
+pub const DEFAULT_MODEL_SMOOTHING_TYPE: DynamicValue = DynamicValue::RttFactor;
+pub const DEFAULT_MODEL_LOG_METRIC: bool = true;
+
 pub const DEFAULT_LOG_BASE_DIR: &str = "./.logs.ue/";
-pub const DEFAULT_DOWNLOAD_BASE_ADDR: &str = "http://some.addr";
+pub const DEFAULT_DOWNLOAD_BASE_ADDR: &str = "127.0.0.1:9393";
 pub const DEFAULT_DOWNLOAD_PATHS: &[&str] = &[
     "/10s/cubic",
     "/10s/bbr",
-    "/10s/pbe/fair0/init",
-    "/10s/pbe/fair0/upper",
-    "/10s/pbe/fair0/init_and_upper",
-    "/10s/pbe/fair0/direct",
-    "/10s/pbe/fair1/init",
-    "/10s/pbe/fair1/upper",
-    "/10s/pbe/fair1/init_and_upper",
-    "/10s/pbe/fair1/direct",
+    "/10s/reno",
+    "/10s/l2b/fair0/init",
+    "/10s/l2b/fair0/upper",
+    "/10s/l2b/fair0/init_and_upper",
+    "/10s/l2b/fair0/direct",
+    "/10s/l2b/fair1/init",
+    "/10s/l2b/fair1/upper",
+    "/10s/l2b/fair1/init_and_upper",
+    "/10s/l2b/fair1/direct",
     "/60s/cubic",
     "/60s/bbr",
-    "/60s/pbe/fair0/init",
-    "/60s/pbe/fair0/upper",
-    "/60s/pbe/fair0/init_and_upper",
-    "/60s/pbe/fair0/direct",
-    "/60s/pbe/fair1/init",
-    "/60s/pbe/fair1/upper",
-    "/60s/pbe/fair1/init_and_upper",
-    "/60s/pbe/fair1/direct",
+    "/60s/reno",
+    "/60s/l2b/fair0/init",
+    "/60s/l2b/fair0/upper",
+    "/60s/l2b/fair0/init_and_upper",
+    "/60s/l2b/fair0/direct",
+    "/60s/l2b/fair1/init",
+    "/60s/l2b/fair1/upper",
+    "/60s/l2b/fair1/init_and_upper",
+    "/60s/l2b/fair1/direct",
 ];
 
+// arguments should be separated into two distinct structs ...
+// one for the cli arguments and one for the config file ones
 #[derive(Debug, Clone, PartialEq, Parser, Serialize, Deserialize)]
 #[command(author, version, about, long_about = None, next_line_help = true)]
 #[command(propagate_version = true)]
@@ -104,7 +138,7 @@ pub struct MilesightArgs {
     /// username for login
     #[arg(long, required = false)]
     pub milesight_user: Option<String>,
-    /// authentication: Base64 encoded password
+    /// authentication: Base64 encoded string (NOT the password base64 encoded, you need to get this through wireshark)
     #[arg(long, required = false)]
     pub milesight_auth: Option<String>,
 }
@@ -164,6 +198,7 @@ pub struct NgScopeArgs {
     pub ng_log_dci_batch_size: Option<u64>,
 }
 
+//why is only one of the strings optional?
 #[derive(Clone, Debug)]
 pub struct FlattenedNgScopeArgs {
     pub ng_path: String,
@@ -270,38 +305,38 @@ impl default::Default for Arguments {
     fn default() -> Self {
         Arguments {
             scenario: Some(DEFAULT_SCENARIO),
-            verbose: Some(true),
-            cellapi: Some(CellApiConfig::Milesight),
+            verbose: Some(DEFAULT_VERBOSE),
+            cellapi: Some(DEFAULT_CELL_API),
             milesight: Some(MilesightArgs {
-                milesight_address: Some("http://127.0.0.1".to_string()),
-                milesight_user: Some("root".to_string()),
-                milesight_auth: Some("root-password".to_string()),
+                milesight_address: Some(DEFAULT_MILESIGHT_ADDRESS.to_string()),
+                milesight_user: Some(DEFAULT_MILESIGHT_USER.to_string()),
+                milesight_auth: Some(DEFAULT_MILESIGHT_AUTH.to_string()),
             }),
             devicepublisher: Some(DevicePublisherArgs {
-                devpub_address: Some("https://some.address".to_string()),
-                devpub_auth: Some("some_auth".to_string()),
+                devpub_address: Some(DEFAULT_DEVPUB_ADDRESS.to_string()),
+                devpub_auth: Some(DEFAULT_DEVPUB_AUTH.to_string()),
             }),
             ngscope: Some(NgScopeArgs {
-                ng_path: Some("/dev_ws/dependencies/ng-scope/build_x86/ngscope/src/".to_string()),
-                ng_local_addr: Some("0.0.0.0:9191".to_string()),
-                ng_server_addr: Some("0.0.0.0:6767".to_string()),
-                ng_log_file: Some("./.ng_scope_log.txt".to_string()),
-                ng_start_process: Some(true),
-                ng_log_dci: Some(true),
-                ng_log_dci_batch_size: Some(60000),
+                ng_path: Some(DEFAULT_NG_PATH.to_string()),
+                ng_local_addr: Some(DEFAULT_NG_LOCAL_ADDR.to_string()),
+                ng_server_addr: Some(DEFAULT_NG_SERVER_ADDR.to_string()),
+                ng_log_file: Some(DEFAULT_NG_LOG_FILE.to_string()),
+                ng_start_process: Some(DEFAULT_NG_START_PROCESS),
+                ng_log_dci: Some(DEFAULT_NG_LOG_DCI),
+                ng_log_dci_batch_size: Some(DEFAULT_NG_LOG_DCI_BATCH_SIZE),
             }),
             rntimatching: Some(RntiMatchingArgs {
-                matching_local_addr: Some("0.0.0.0:9292".to_string()),
-                matching_traffic_pattern: Some(vec![RntiMatchingTrafficPatternType::A]),
-                matching_traffic_destination: Some("1.1.1.1:53".to_string()),
-                matching_log_traffic: Some(true),
+                matching_local_addr: Some(DEFAULT_MATCHING_LOCAL_ADDR.to_string()),
+                matching_traffic_pattern: Some(DEFAULT_MATCHING_TRAFFIC_PATTERN.to_vec()),
+                matching_traffic_destination: Some(DEFAULT_MATCHING_TRAFFIC_DEST.to_string()),
+                matching_log_traffic: Some(DEFAULT_MATCHING_LOG_TRAFFIC),
             }),
             model: Some(ModelArgs {
-                model_send_metric_interval_value: Some(1.0),
-                model_send_metric_interval_type: Some(DynamicValue::RttFactor),
-                model_metric_smoothing_size_value: Some(1.0),
-                model_metric_smoothing_size_type: Some(DynamicValue::RttFactor),
-                model_log_metric: Some(true),
+                model_send_metric_interval_value: Some(DEFAULT_MODEL_INTERVAL_VALUE),
+                model_send_metric_interval_type: Some(DEFAULT_MODEL_INTERVAL_TYPE),
+                model_metric_smoothing_size_value: Some(DEFAULT_MODEL_SMOOTHING_VALUE),
+                model_metric_smoothing_size_type: Some(DEFAULT_MODEL_SMOOTHING_TYPE),
+                model_log_metric: Some(DEFAULT_MODEL_LOG_METRIC),
             }),
             log: Some(LogArgs {
                 log_base_dir: Some(DEFAULT_LOG_BASE_DIR.to_string()),
@@ -324,7 +359,6 @@ impl Arguments {
     pub fn build() -> Result<Self, Box<dyn Error>> {
         let app: Command = Arguments::command();
         let app_name: &str = app.get_name();
-
         let parsed_args = Arguments::parse();
         match parsed_args.clone().get_config_file(app_name) {
             Ok(parsed_config_args) => {
@@ -342,19 +376,83 @@ impl Arguments {
 
     /// Get configuration file.
     /// A new configuration file is created with default values if none exists.
+    /// I don't get why we don't modify in-place by using references?
     fn get_config_file(mut self, app_name: &str) -> Result<Self, Box<dyn Error>> {
         let config_file: Arguments = confy::load(app_name, None)?;
 
+        // CLI > Config file > default values
         self.cellapi = self.cellapi.or(config_file.cellapi);
-        self.milesight = self.milesight.or(config_file.milesight);
-        self.devicepublisher = self.devicepublisher.or(config_file.devicepublisher);
-        self.ngscope = self.ngscope.or(config_file.ngscope);
-        self.rntimatching = self.rntimatching.or(config_file.rntimatching);
-        self.model = self.model.or(config_file.model);
+        //self.milesight = self.milesight.or(config_file.milesight);
+        //self.devicepublisher = self.devicepublisher.or(config_file.devicepublisher);
+        //self.ngscope = self.ngscope.or(config_file.ngscope);
+        //self.rntimatching = self.rntimatching.or(config_file.rntimatching);
+        //self.model = self.model.or(config_file.model);
         self.log = self.log.or(config_file.log);
-        self.download = self.download.or(config_file.download);
+        //self.download = self.download.or(config_file.download);
         self.verbose = self.verbose.or(config_file.verbose);
         self.scenario = self.scenario.or(config_file.scenario);
+        // when passing arguments via the CLI using clap, we are not using default values (because prior config files have higher prio than default values)
+        // which means we sometimes get null values from CLI when a struct is nested
+        // the easiest way would probably be to write a wrapper script
+        // the clean way would be to implement some kind of merge prioritization
+        // we chose to replace the merge above by some filler function
+        // nested parts: (exclude log because it only has one field)
+        // milesight
+        // this borrows the inner struct but not the option/wrapper and doesnt move the config struct
+        // the unwrap below consumes the individual parts of the config struct though
+        if self.milesight.is_some() {
+            if let Some(ref mut milesight) = self.milesight {
+                milesight.fill_with_config_file(config_file.milesight.unwrap());
+            }
+        } else {
+            self.milesight = config_file.milesight;
+        }
+        // devpub
+        if self.devicepublisher.is_some() {
+            if let Some(ref mut devicepublisher) = self.devicepublisher {
+                devicepublisher.fill_with_config_file(config_file.devicepublisher.unwrap());
+            }
+        } else {
+            self.devicepublisher = config_file.devicepublisher;
+        }
+
+        // ngscope
+        if self.ngscope.is_some() {
+            if let Some(ref mut ngscope) = self.ngscope {
+                ngscope.fill_with_config_file(config_file.ngscope.unwrap());
+            }
+        } else {
+            self.ngscope = config_file.ngscope;
+        }
+
+        // rntimatching
+        if self.rntimatching.is_some() {
+            if let Some(ref mut rntimatching) = self.rntimatching {
+                rntimatching.fill_with_config_file(config_file.rntimatching.unwrap());
+            }
+        } else {
+            self.rntimatching = config_file.rntimatching;
+        }
+
+        // model
+        if self.model.is_some() {
+            if let Some(ref mut model) = self.model {
+                model.fill_with_config_file(config_file.model.unwrap());
+            }
+        } else {
+            self.model = config_file.model;
+        }
+
+        // download
+        if self.download.is_some() {
+            if let Some(ref mut download) = self.download {
+                download.fill_with_config_file(config_file.download.unwrap());
+            }
+        } else {
+            self.download = config_file.download;
+        }
+
+        // probably only need to check download if we are in the PerformMeasurement scenario
 
         Ok(self)
     }
@@ -370,16 +468,113 @@ impl Arguments {
     fn print_config_file(self, app_name: &str) -> Result<Self, Box<dyn Error>> {
         if self.verbose.unwrap_or(true) {
             let file_path: PathBuf = confy::get_configuration_file_path(app_name, None)?;
-            print_debug(&format!(
+            print_info(&format!(
                 "DEBUG [parse] Configuration file: '{}'",
                 file_path.display()
             ));
 
             let yaml: String = serde_yaml::to_string(&self)?;
-            print_debug(&format!("\t{}", yaml.replace('\n', "\n\t")));
+            print_info(&format!("\t{}", yaml.replace('\n', "\n\t")));
         }
 
         Ok(self)
+    }
+}
+
+impl MilesightArgs {
+    fn fill_with_config_file(&mut self, config_file: MilesightArgs) {
+        if self.milesight_address.is_none() {
+            self.milesight_address = config_file.milesight_address;
+        }
+        if self.milesight_user.is_none() {
+            self.milesight_user = config_file.milesight_user;
+        }
+        if self.milesight_auth.is_none() {
+            self.milesight_auth = config_file.milesight_auth;
+        }
+    }
+}
+
+impl DevicePublisherArgs {
+    fn fill_with_config_file(&mut self, config_file: DevicePublisherArgs) {
+        if self.devpub_address.is_none() {
+            self.devpub_address = config_file.devpub_address;
+        }
+        if self.devpub_auth.is_none() {
+            self.devpub_auth = config_file.devpub_auth;
+        }
+    }
+}
+
+impl NgScopeArgs {
+    fn fill_with_config_file(&mut self, config_file: NgScopeArgs) {
+        if self.ng_path.is_none() {
+            self.ng_path = config_file.ng_path;
+        }
+        if self.ng_local_addr.is_none() {
+            self.ng_local_addr = config_file.ng_local_addr;
+        }
+        if self.ng_server_addr.is_none() {
+            self.ng_server_addr = config_file.ng_server_addr;
+        }
+        if self.ng_log_file.is_none() {
+            self.ng_log_file = config_file.ng_log_file;
+        }
+        if self.ng_start_process.is_none() {
+            self.ng_start_process = config_file.ng_start_process;
+        }
+        if self.ng_log_dci.is_none() {
+            self.ng_log_dci = config_file.ng_log_dci;
+        }
+        if self.ng_log_dci_batch_size.is_none() {
+            self.ng_log_dci_batch_size = config_file.ng_log_dci_batch_size;
+        }
+    }
+}
+
+impl RntiMatchingArgs {
+    fn fill_with_config_file(&mut self, config_file: RntiMatchingArgs) {
+        if self.matching_local_addr.is_none() {
+            self.matching_local_addr = config_file.matching_local_addr;
+        }
+        if self.matching_traffic_pattern.is_none() {
+            self.matching_traffic_pattern = config_file.matching_traffic_pattern;
+        }
+        if self.matching_traffic_destination.is_none() {
+            self.matching_traffic_destination = config_file.matching_traffic_destination;
+        }
+        if self.matching_log_traffic.is_none() {
+            self.matching_log_traffic = config_file.matching_log_traffic;
+        }
+    }
+}
+
+impl ModelArgs {
+    fn fill_with_config_file(&mut self, config_file: ModelArgs) {
+        if self.model_send_metric_interval_value.is_none() {
+            self.model_send_metric_interval_value = config_file.model_send_metric_interval_value;
+        }
+        if self.model_send_metric_interval_type.is_none() {
+            self.model_send_metric_interval_type = config_file.model_send_metric_interval_type;
+        }
+        if self.model_metric_smoothing_size_value.is_none() {
+            self.model_metric_smoothing_size_value = config_file.model_metric_smoothing_size_value;
+        }
+        if self.model_metric_smoothing_size_type.is_none() {
+            self.model_metric_smoothing_size_type = config_file.model_metric_smoothing_size_type;
+        }
+    }
+}
+
+impl DownloadArgs {
+    fn fill_with_config_file(&mut self, config_file: DownloadArgs) {
+        if self.download_base_addr.is_none() {
+            self.download_base_addr = config_file.download_base_addr;
+        }
+
+        if self.download_paths.is_none() {
+            self.download_paths = config_file.download_paths;
+        }
     }
 }
 
