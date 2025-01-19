@@ -279,7 +279,7 @@ impl Logger {
                 return sender;
             }
         }
-        return self.tx_vec.last().unwrap();
+        self.tx_vec.last().unwrap()
     }
 
     pub fn set_base_dir(new_base_dir: String) {

@@ -576,7 +576,7 @@ fn calculate_pbe_cc_capacity(
     /*
      * Determine the fair share badnwidth c_p (physical layer) and c_t (transport layer)
      * */
-    let p_alloc_rnti_suggested: u64 = p_alloc_rnti + ((p_idle + nof_rnti_shared - 1) / nof_rnti_shared);
+    let p_alloc_rnti_suggested: u64 = p_alloc_rnti + p_idle.div_ceil(nof_rnti_shared);
     let c_p: u64 = (((r_w * p_alloc_rnti_suggested) as f64) / (nof_dci as f64)) as u64;
     let c_t = translate_physcial_to_transport_simple(c_p);
 
